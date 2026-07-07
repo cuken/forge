@@ -1,3 +1,4 @@
+import type { HealthCheckResult, HealthStatus } from './health.js';
 import type { Task } from './types.js';
 
 export type IsolationKind = 'host' | 'container' | 'vm' | 'remote';
@@ -41,6 +42,12 @@ export interface IsolationProvider {
   kind: 'isolation';
   prepare(input: { task: Task; workspace: WorkspaceRef; policy?: IsolationPolicy }): Promise<ExecutionEnvironment>;
   cleanup?(environment: ExecutionEnvironment): Promise<void>;
+}
+
+export interface IsolationStatus {
+  providerId: string;
+  readiness: HealthStatus;
+  checks: HealthCheckResult[];
 }
 
 export function hasIsolation(value: unknown): value is IsolationProvider {

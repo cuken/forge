@@ -17,7 +17,7 @@ Defined in `src/core/types.ts`:
 
 Defined in `src/core/health.ts` and `src/core/sync.ts`:
 
-- `DoctorProvider` — declares environment checks for `forge doctor`
+- `DoctorProvider` — declares environment checks for `forge doctor`; isolation providers also use these checks for `forge isolation status`
 - `SyncProvider` — declares ordered sync tasks for `forge sync`
 - `BuildPlannerProvider` — converts natural-language build requests into task/spec/run plans for `forge build`
 

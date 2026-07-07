@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { DoctorProvider } from '../src/core/health.js';
 import { ForgeRuntime } from '../src/core/forge.js';
 import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
 import type { AgentProvider, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
@@ -10,6 +11,7 @@ import type { ExecutionEnvironment, IsolationProvider } from '../src/core/isolat
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; async isRepo(){return true;} async init(){} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
 class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; async create(input:{task:Task}){ return { id: input.task.id, path: '/host/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
 class ContainerIsolation implements IsolationProvider { id='isolation.container-test'; kind='isolation' as const; cleaned: string[] = []; async prepare(input:{workspace:{id:string}}): Promise<ExecutionEnvironment> { return { id: `container:${input.workspace.id}`, kind: 'container', workspacePath: '/container/workspace', description: 'test container' }; } async cleanup(environment: ExecutionEnvironment) { this.cleaned.push(environment.id); } }
+class CheckedIsolation extends ContainerIsolation implements DoctorProvider { override id='isolation.checked'; checks(){ return [{ id:'isolation.checked:ready', label:'checked isolation', run:async()=>({ id:'isolation.checked:ready', status:'pass' as const, message:'checked isolation is ready' }) }]; } }
 class CapturingAgent implements AgentProvider { id='agent.capture'; kind='agent' as const; cwd?: string; context?: string; async run(input:{workspacePath:string; context:string}){ this.cwd = input.workspacePath; this.context = input.context; return { exitCode: 0, output: 'ok' }; } }
 class ThrowingAgent implements AgentProvider { id='agent.throwing'; kind='agent' as const; async run(){ throw new Error('agent crashed'); } }
 
@@ -37,5 +39,15 @@ describe('execution isolation', () => {
     expect(isolation.cleaned).toEqual([`container:${task.id}`]);
     expect(result[0]).toEqual({ task: task.id, error: 'Error: agent crashed' });
     expect((await rt.deps.store.get(task.id))?.status).toBe('failed');
+  });
+
+  it('reports selected isolation provider readiness from provider checks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-isolation-status-test-'));
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), isolation: new CheckedIsolation(), agent: new CapturingAgent() });
+    await expect(rt.isolationStatus()).resolves.toEqual({
+      providerId: 'isolation.checked',
+      readiness: 'pass',
+      checks: [{ id:'isolation.checked:ready', status:'pass', message:'checked isolation is ready' }],
+    });
   });
 });

@@ -28,6 +28,20 @@ Current checks:
 
 Exit code is non-zero if any check fails. Warnings are printed but do not fail the command.
 
+## `forge isolation status`
+
+Reports the selected isolation provider and readiness.
+
+Selection uses the same `FORGE_ISOLATION=host|docker|podman` configuration as task execution and `forge doctor`. Readiness is derived from checks declared by the selected isolation provider. Any failing check makes the command exit non-zero.
+
+Example:
+
+```bash
+FORGE_ISOLATION=podman forge isolation status
+```
+
+Output includes the provider id, aggregate readiness (`pass`, `warn`, or `fail`), and provider check details.
+
 ## `forge sync`
 
 Runs provider-declared sync tasks to reconcile local state with declared upstream systems.

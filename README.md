@@ -6,6 +6,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 
 - generic core interfaces for tasks, VCS, workspaces, agents, SCM, and stores
 - provider-declared health checks via `forge doctor`
+- isolation provider readiness reporting via `forge isolation status`
 - provider-declared sync tasks via `forge sync`
 - natural-language build flow via `forge build`
 - filesystem task store
@@ -52,7 +53,9 @@ forge sync -m "feat: describe your change"
 ```bash
 forge init
 forge doctor
+forge isolation status
 FORGE_ISOLATION=docker forge doctor
+FORGE_ISOLATION=podman forge isolation status
 FORGE_ISOLATION=podman forge doctor
 FORGE_ISOLATION=podman FORGE_PODMAN_IMAGE=your-agent-image forge run toml
 forge sync --dry-run

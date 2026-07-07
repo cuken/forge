@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
-import type { IsolationProvider } from './isolation.js';
+import type { IsolationProvider, IsolationStatus } from './isolation.js';
 import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import type { AgentProvider, ForgeConfig, ForgeProvider, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
@@ -27,6 +27,20 @@ export class ForgeRuntime {
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
     return runChecks(checks);
+  }
+
+  async isolationStatus(): Promise<IsolationStatus> {
+    const provider = this.deps.isolation;
+    if (!provider) {
+      return {
+        providerId: 'isolation.none',
+        readiness: 'warn',
+        checks: [{ id: 'isolation.none:configured', status: 'warn', message: 'no isolation provider configured' }],
+      };
+    }
+    const checks = hasDoctor(provider) ? await runChecks(provider.checks()) : [];
+    const readiness = checks.some(check => check.status === 'fail') ? 'fail' : checks.some(check => check.status === 'warn') ? 'warn' : 'pass';
+    return { providerId: provider.id, readiness, checks };
   }
 
   async sync(input: SyncInput = {}): Promise<SyncResult[]> {

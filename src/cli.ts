@@ -44,6 +44,19 @@ program.command('doctor').description('Run provider-declared environment checks'
   if (failed) process.exitCode = 1;
 });
 
+const isolation = program.command('isolation').description('Inspect the selected isolation provider');
+isolation.command('status').description('Report the selected isolation provider and readiness').action(async () => {
+  const status = await runtime().isolationStatus();
+  console.log(`provider=${status.providerId}`);
+  console.log(`readiness=${status.readiness}`);
+  for (const r of status.checks) {
+    const mark = r.status === 'pass' ? '✓' : r.status === 'warn' ? '!' : '✗';
+    console.log(`${mark} ${r.id}: ${r.message}`);
+    if (r.detail) console.log(`  ${r.detail.trim().split('\n').join('\n  ')}`);
+  }
+  if (status.readiness === 'fail') process.exitCode = 1;
+});
+
 program.command('sync').description('Run provider-declared sync tasks').option('-m, --message <message>', 'commit/sync message').option('--dry-run', 'show sync work without changing state').action(async (opts) => {
   const results = await runtime().sync({ message: opts.message, dryRun: opts.dryRun });
   let failed = false;
