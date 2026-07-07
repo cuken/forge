@@ -15,7 +15,7 @@ import { PodmanIsolationProvider } from './providers/isolation-podman/index.js';
 function isolationProvider() {
   const requested = process.env.FORGE_ISOLATION ?? 'host';
   if (requested === 'docker') return new DockerIsolationProvider();
-  if (requested === 'podman') return new PodmanIsolationProvider({ image: process.env.FORGE_PODMAN_IMAGE, readyCommand: process.env.FORGE_PODMAN_READY ? ['sh', '-lc', process.env.FORGE_PODMAN_READY] : undefined, readyAttempts: process.env.FORGE_PODMAN_READY_ATTEMPTS ? Number(process.env.FORGE_PODMAN_READY_ATTEMPTS) : undefined });
+  if (requested === 'podman') return new PodmanIsolationProvider({ image: process.env.FORGE_PODMAN_IMAGE, readyCommand: process.env.FORGE_PODMAN_READY ? ['sh', '-lc', process.env.FORGE_PODMAN_READY] : undefined, readyAttempts: process.env.FORGE_PODMAN_READY_ATTEMPTS ? Number(process.env.FORGE_PODMAN_READY_ATTEMPTS) : undefined, mountPiConfig: process.env.FORGE_PODMAN_MOUNT_PI_CONFIG !== '0', piConfigPath: process.env.FORGE_PODMAN_PI_CONFIG });
   if (requested === 'host') return new HostIsolationProvider();
   throw new Error(`Unknown FORGE_ISOLATION '${requested}'. Expected host, docker, or podman.`);
 }

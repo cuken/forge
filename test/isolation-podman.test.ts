@@ -19,6 +19,7 @@ function fakeRunner() {
     if (args[0] === 'create') return { exitCode: 0, stdout: 'container-abc123\n', stderr: '' };
     if (args[0] === 'start') return { exitCode: 0, stdout: 'container-abc123\n', stderr: '' };
     if (args[0] === 'rm') return { exitCode: 0, stdout: 'container-abc123\n', stderr: '' };
+    if (args[0] === 'cp') return { exitCode: 0, stdout: '', stderr: '' };
     if (args[0] === 'exec' && args.includes('echo')) return { exitCode: 0, stdout: 'hello\n', stderr: '' };
     if (args[0] === 'exec') return { exitCode: 0, stdout: '', stderr: '' };
     if (args[0] === '--version') return { exitCode: 0, stdout: 'podman version 5.0.0\n', stderr: '' };
@@ -32,7 +33,7 @@ function fakeRunner() {
 describe('PodmanIsolationProvider', () => {
   it('creates, starts, describes, and cleans up a podman container for a workspace', async () => {
     const { calls, runner } = fakeRunner();
-    const provider = new PodmanIsolationProvider({ runner, image: 'forge-agent:latest' });
+    const provider = new PodmanIsolationProvider({ runner, image: 'forge-agent:latest', mountPiConfig: false });
 
     const env = await provider.prepare({
       task,
@@ -73,7 +74,7 @@ describe('PodmanIsolationProvider', () => {
       if (args[0] === 'exec') return ++readyAttempts === 2 ? { exitCode: 0, stdout: '', stderr: '' } : { exitCode: 1, stdout: '', stderr: 'not yet' };
       return { exitCode: 0, stdout: '', stderr: '' };
     };
-    const provider = new PodmanIsolationProvider({ runner, setupCommands: [['sh', '-lc', 'setup']], readyCommand: ['sh', '-lc', 'ready'], readyAttempts: 2, readyDelayMs: 0 });
+    const provider = new PodmanIsolationProvider({ runner, mountPiConfig: false, setupCommands: [['sh', '-lc', 'setup']], readyCommand: ['sh', '-lc', 'ready'], readyAttempts: 2, readyDelayMs: 0 });
 
     await provider.prepare({ task, workspace: { id: 'ws-1', path: '/tmp/forge/ws-1', branch: 'forge/task-123' } });
 
@@ -83,16 +84,26 @@ describe('PodmanIsolationProvider', () => {
 
   it('executes commands inside the ready podman environment', async () => {
     const { calls, runner } = fakeRunner();
-    const provider = new PodmanIsolationProvider({ runner });
+    const provider = new PodmanIsolationProvider({ runner, mountPiConfig: false });
     const env = await provider.prepare({ task, workspace: { id: 'ws-1', path: '/tmp/forge/ws-1', branch: 'forge/task-123' } });
 
     await expect(env.execute?.({ command: 'echo', args: ['hello'], cwd: '/workspace' })).resolves.toEqual({ exitCode: 0, output: 'hello\n' });
     expect(calls.at(-1)?.args).toEqual(['exec', '--workdir', '/workspace', 'container-abc123', 'echo', 'hello']);
   });
 
+  it('copies pi config when explicitly configured and present', async () => {
+    const { calls, runner } = fakeRunner();
+    const provider = new PodmanIsolationProvider({ runner, piConfigPath: '.', image: 'forge-agent:latest' });
+
+    await provider.prepare({ task, workspace: { id: 'ws-1', path: '/tmp/forge/ws-1', branch: 'forge/task-123' } });
+
+    expect(calls.map(call => call.args.join(' '))).toContain('exec container-abc123 mkdir -p /root/.pi');
+    expect(calls.map(call => call.args.join(' '))).toContain('cp ./. container-abc123:/root/.pi/agent');
+  });
+
   it('reports provider-declared podman health checks', async () => {
     const { runner } = fakeRunner();
-    const provider = new PodmanIsolationProvider({ runner, image: 'missing:latest' });
+    const provider = new PodmanIsolationProvider({ runner, mountPiConfig: false, image: 'missing:latest' });
 
     await expect(Promise.all(provider.checks().map(check => check.run()))).resolves.toEqual([
       { id: 'isolation.podman:binary', status: 'pass', message: 'podman version 5.0.0' },

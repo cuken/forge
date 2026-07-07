@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import type { DoctorProvider } from '../../core/health.js';
 import type { ExecutionEnvironment, IsolationPolicy, IsolationProvider, WorkspaceRef } from '../../core/isolation.js';
@@ -15,6 +17,8 @@ export interface PodmanIsolationOptions {
   writable?: boolean;
   createArgs?: string[];
   volumeOptions?: string[];
+  mountPiConfig?: boolean;
+  piConfigPath?: string;
   keepAliveCommand?: string[];
   setupCommands?: string[][];
   readyCommand?: string[];
@@ -54,6 +58,8 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
       '--label', `org.forge.workspace=${input.workspace.id}`,
     ];
 
+    const piConfigMount = this.piConfigMount();
+
     if (network === 'disabled') createArgs.push('--network', 'none');
     if (network === 'inherit') createArgs.push('--network', 'host');
 
@@ -74,6 +80,19 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
       if (setup.exitCode !== 0) {
         await this.runner(this.command, ['rm', '-f', containerId]);
         throw new Error(`podman setup failed: ${(setup.stderr || setup.stdout).trim()}`);
+      }
+    }
+
+    if (piConfigMount) {
+      const mkdir = await this.runner(this.command, ['exec', containerId, 'mkdir', '-p', '/root/.pi']);
+      if (mkdir.exitCode !== 0) {
+        await this.runner(this.command, ['rm', '-f', containerId]);
+        throw new Error(`podman pi config setup failed: ${(mkdir.stderr || mkdir.stdout).trim()}`);
+      }
+      const copied = await this.runner(this.command, ['cp', `${piConfigMount}/.`, `${containerId}:/root/.pi/agent`]);
+      if (copied.exitCode !== 0) {
+        await this.runner(this.command, ['rm', '-f', containerId]);
+        throw new Error(`podman pi config copy failed: ${(copied.stderr || copied.stdout).trim()}`);
       }
     }
 
@@ -102,6 +121,7 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
         writable: String(writable),
         readyCommand: readyCommand.join(' '),
         readyAttempts: String(attempts),
+        piConfigMounted: String(Boolean(piConfigMount)),
       },
       execute: async execInput => {
         const cwd = execInput.cwd ?? this.containerWorkspacePath;
@@ -152,6 +172,12 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
         },
       },
     ];
+  }
+
+  private piConfigMount() {
+    if (this.options.mountPiConfig === false) return undefined;
+    const path = this.options.piConfigPath ?? `${homedir()}/.pi/agent`;
+    return existsSync(path) ? path : undefined;
   }
 
   private async waitUntilReady(containerId: string, readyCommand: string[], attempts: number, delayMs: number) {
