@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "vitest run",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "podman:image": "podman build -t localhost/forge-agent-pi:latest -f containers/podman/Containerfile ."
   },
   "keywords": [],
   "author": "",

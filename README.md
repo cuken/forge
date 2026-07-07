@@ -36,6 +36,7 @@ Start here:
 ```bash
 npm test
 npm run build
+npm run podman:image
 forge doctor
 ```
 

@@ -14,8 +14,12 @@ export interface PodmanIsolationOptions {
   network?: IsolationPolicy['network'];
   writable?: boolean;
   createArgs?: string[];
+  volumeOptions?: string[];
   keepAliveCommand?: string[];
+  setupCommands?: string[][];
   readyCommand?: string[];
+  readyAttempts?: number;
+  readyDelayMs?: number;
   runner?: PodmanCommandRunner;
 }
 
@@ -30,7 +34,7 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
 
   constructor(private options: PodmanIsolationOptions = {}) {
     this.command = options.command ?? 'podman';
-    this.image = options.image ?? 'docker.io/library/node:22-bookworm';
+    this.image = options.image ?? 'localhost/forge-agent-pi:latest';
     this.containerWorkspacePath = options.containerWorkspacePath ?? '/workspace';
     this.namePrefix = options.namePrefix ?? 'forge-';
     this.runner = options.runner ?? runCommand;
@@ -40,7 +44,7 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
     const containerName = this.containerName(input.task, input.workspace);
     const network = input.policy?.network ?? this.options.network ?? 'restricted';
     const writable = input.policy?.writable ?? this.options.writable ?? true;
-    const volumeMode = writable ? 'rw' : 'ro';
+    const volumeMode = [writable ? 'rw' : 'ro', ...(this.options.volumeOptions ?? ['Z'])].join(',');
     const createArgs = [
       'create',
       '--name', containerName,
@@ -65,11 +69,21 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
       throw new Error(`podman start failed: ${(started.stderr || started.stdout).trim()}`);
     }
 
-    const readyCommand = this.options.readyCommand ?? ['sh', '-lc', 'true'];
-    const ready = await this.runner(this.command, ['exec', '--workdir', this.containerWorkspacePath, containerId, ...readyCommand]);
+    for (const setupCommand of this.options.setupCommands ?? []) {
+      const setup = await this.runner(this.command, ['exec', '--workdir', this.containerWorkspacePath, containerId, ...setupCommand]);
+      if (setup.exitCode !== 0) {
+        await this.runner(this.command, ['rm', '-f', containerId]);
+        throw new Error(`podman setup failed: ${(setup.stderr || setup.stdout).trim()}`);
+      }
+    }
+
+    const readyCommand = this.options.readyCommand ?? ['sh', '-lc', 'command -v pi >/dev/null && command -v git >/dev/null && test -w .'];
+    const attempts = this.options.readyAttempts ?? 10;
+    const delayMs = this.options.readyDelayMs ?? 250;
+    const ready = await this.waitUntilReady(containerId, readyCommand, attempts, delayMs);
     if (ready.exitCode !== 0) {
       await this.runner(this.command, ['rm', '-f', containerId]);
-      throw new Error(`podman environment not ready: ${(ready.stderr || ready.stdout).trim()}`);
+      throw new Error(`podman environment not ready after ${attempts} attempts: ${(ready.stderr || ready.stdout).trim()}`);
     }
 
     return {
@@ -87,6 +101,7 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
         network,
         writable: String(writable),
         readyCommand: readyCommand.join(' '),
+        readyAttempts: String(attempts),
       },
       execute: async execInput => {
         const cwd = execInput.cwd ?? this.containerWorkspacePath;
@@ -133,10 +148,20 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
           const result = await this.runner(this.command, ['image', 'exists', this.image]);
           return result.exitCode === 0
             ? { id: `${this.id}:image`, status: 'pass' as const, message: `${this.image} is present locally` }
-            : { id: `${this.id}:image`, status: 'warn' as const, message: `${this.image} is not present locally; podman may pull it when preparing isolation`, detail: result.stderr || result.stdout };
+            : { id: `${this.id}:image`, status: 'warn' as const, message: `${this.image} is not present locally; build it with npm run podman:image or set FORGE_PODMAN_IMAGE`, detail: result.stderr || result.stdout };
         },
       },
     ];
+  }
+
+  private async waitUntilReady(containerId: string, readyCommand: string[], attempts: number, delayMs: number) {
+    let last = { exitCode: 1, stdout: '', stderr: 'not checked' };
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      last = await this.runner(this.command, ['exec', '--workdir', this.containerWorkspacePath, containerId, ...readyCommand]);
+      if (last.exitCode === 0) return last;
+      if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+    return last;
   }
 
   private containerName(task: Task, workspace: WorkspaceRef) {

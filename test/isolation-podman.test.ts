@@ -53,13 +53,32 @@ describe('PodmanIsolationProvider', () => {
       },
     });
     expect(calls[0].args).toContain('--volume');
-    expect(calls[0].args).toContain('/tmp/forge/ws-1:/workspace:ro');
+    expect(calls[0].args).toContain('/tmp/forge/ws-1:/workspace:ro,Z');
     expect(calls[0].args).toContain('--network');
     expect(calls[0].args).toContain('none');
     expect(calls[0].args.at(-3)).toBe('forge-agent:latest');
     expect(calls.map(call => call.args[0])).toEqual(['create', 'start', 'exec', 'rm']);
-    expect(calls[2].args).toEqual(['exec', '--workdir', '/workspace', 'container-abc123', 'sh', '-lc', 'true']);
+    expect(calls[2].args).toEqual(['exec', '--workdir', '/workspace', 'container-abc123', 'sh', '-lc', 'command -v pi >/dev/null && command -v git >/dev/null && test -w .']);
     expect(calls[3].args).toEqual(['rm', '-f', 'container-abc123']);
+  });
+
+  it('runs setup hooks before readiness and retries until ready', async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    let readyAttempts = 0;
+    const runner: PodmanCommandRunner = async (command, args = []) => {
+      calls.push({ command, args });
+      if (args[0] === 'create') return { exitCode: 0, stdout: 'container-abc123\n', stderr: '' };
+      if (args[0] === 'start') return { exitCode: 0, stdout: '', stderr: '' };
+      if (args[0] === 'exec' && args.includes('setup')) return { exitCode: 0, stdout: '', stderr: '' };
+      if (args[0] === 'exec') return ++readyAttempts === 2 ? { exitCode: 0, stdout: '', stderr: '' } : { exitCode: 1, stdout: '', stderr: 'not yet' };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    const provider = new PodmanIsolationProvider({ runner, setupCommands: [['sh', '-lc', 'setup']], readyCommand: ['sh', '-lc', 'ready'], readyAttempts: 2, readyDelayMs: 0 });
+
+    await provider.prepare({ task, workspace: { id: 'ws-1', path: '/tmp/forge/ws-1', branch: 'forge/task-123' } });
+
+    expect(calls.map(call => call.args.join(' '))).toContain('exec --workdir /workspace container-abc123 sh -lc setup');
+    expect(calls.filter(call => call.args.join(' ').includes('ready'))).toHaveLength(2);
   });
 
   it('executes commands inside the ready podman environment', async () => {
@@ -78,7 +97,7 @@ describe('PodmanIsolationProvider', () => {
     await expect(Promise.all(provider.checks().map(check => check.run()))).resolves.toEqual([
       { id: 'isolation.podman:binary', status: 'pass', message: 'podman version 5.0.0' },
       { id: 'isolation.podman:engine', status: 'pass', message: 'podman engine available (crun)' },
-      { id: 'isolation.podman:image', status: 'warn', message: 'missing:latest is not present locally; podman may pull it when preparing isolation', detail: 'not found' },
+      { id: 'isolation.podman:image', status: 'warn', message: 'missing:latest is not present locally; build it with npm run podman:image or set FORGE_PODMAN_IMAGE', detail: 'not found' },
     ]);
   });
 });
