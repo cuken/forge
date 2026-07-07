@@ -33,7 +33,7 @@ export class ForgeRuntime {
     return runSyncTasks(tasks, input);
   }
 
-  async build(input: BuildRequest): Promise<BuildResult> {
+  async build(input: BuildRequest, observer?: (event: string) => void): Promise<BuildResult> {
     const planner = this.providers().find(provider => hasBuildPlanner(provider));
     if (!planner || !hasBuildPlanner(planner)) throw new Error('No build planner provider configured');
     const plan = await planner.planBuild(input);
@@ -47,7 +47,7 @@ export class ForgeRuntime {
       const current = await this.deps.store.get(task.id);
       return { task: current ?? task, plan, action: 'ready' };
     }
-    const runResults = await this.runReady(task.id);
+    const runResults = await this.runReady(task.id, observer);
     const current = await this.deps.store.get(task.id);
     return { task: current ?? task, plan, action: 'ran', runResults };
   }
@@ -73,20 +73,25 @@ export class ForgeRuntime {
     return this.deps.store.update(task.id, { status: 'ready', spec: { ...task.spec, approved: true, approvedAt: new Date().toISOString() } });
   }
 
-  async runTask(taskIdOrPattern?: string) {
+  async runTask(taskIdOrPattern?: string, observer?: (event: string) => void) {
     const task = taskIdOrPattern ? await resolveTask(this.deps.store, taskIdOrPattern) : await resolveTask(this.deps.store, undefined, 'ready');
     if (task.status !== 'ready') throw new Error(`Task is ${task.status}, not ready`);
-    return this.runReady(task.id);
+    return this.runReady(task.id, observer);
   }
 
-  async runReady(taskId?: string) {
+  async runReady(taskId?: string, observer?: (event: string) => void) {
     const ready = (await this.deps.store.list()).filter(t => t.status === 'ready' && (!taskId || t.id === taskId));
     const results = [];
     for (const task of ready) {
+      observer?.(`starting task ${task.id}: ${task.title}\n`);
       await this.deps.store.update(task.id, { status: 'running' });
       try {
+        observer?.('creating workspace...\n');
         const ws = await this.deps.workspace.create({ task });
-        const result = await this.deps.agent.run({ task, workspacePath: ws.path, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}` });
+        observer?.(`workspace ${ws.path} on ${ws.branch}\n`);
+        observer?.(`running agent ${this.deps.agent.id}...\n`);
+        const result = await this.deps.agent.run({ task, workspacePath: ws.path, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}`, onOutput: chunk => observer?.(chunk) });
+        observer?.(`agent exited ${result.exitCode}\n`);
         await this.deps.store.update(task.id, { status: result.exitCode === 0 ? 'reviewing' : 'failed' });
         results.push({ task: task.id, workspace: ws, result });
       } catch (error) {

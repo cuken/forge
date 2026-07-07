@@ -57,7 +57,7 @@ export interface WorkspaceProvider extends ForgeProvider {
 
 export interface AgentProvider extends ForgeProvider {
   kind: 'agent';
-  run(input: { task: Task; workspacePath: string; context: string }): Promise<{ exitCode: number; output: string }>;
+  run(input: { task: Task; workspacePath: string; context: string; onOutput?: (chunk: string) => void }): Promise<{ exitCode: number; output: string }>;
 }
 
 export interface ScmProvider extends ForgeProvider {
