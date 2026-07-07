@@ -131,7 +131,7 @@ For each ready task:
 
 1. Mark task `running`.
 2. Ask `WorkspaceProvider` to create a workspace.
-3. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman`. The host provider returns the worktree directly; Docker and Podman providers create and start a task container with the workspace bind-mounted at the container workspace path.
+3. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman`. The host provider returns the worktree directly; container providers own readiness checks, command delivery, and cleanup details. The Podman provider can run agent commands through `podman exec` once its readiness command passes.
 4. Ask `AgentProvider` to run with task/workspace/environment context.
 5. Ask the isolation provider to clean up a prepared environment after the agent attempt.
 6. Mark task `reviewing` on success or `failed` on failure.

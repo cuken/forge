@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import type { ExecutionEnvironment } from '../../core/isolation.js';
 import type { DoctorProvider } from '../../core/health.js';
 import type { AgentProvider, Task } from '../../core/types.js';
 import { commandExists, runCommand } from '../../util/command.js';
@@ -13,8 +14,11 @@ export class PiAgentProvider implements AgentProvider, DoctorProvider {
       { id: `${this.id}:version`, label: 'pi version', run: async () => { const r = await runCommand(this.command, ['--version']); return r.exitCode === 0 ? { id: `${this.id}:version`, status: 'pass' as const, message: r.stdout.trim() || 'pi responded' } : { id: `${this.id}:version`, status: 'warn' as const, message: 'pi version check failed', detail: r.stderr || r.stdout }; } },
     ];
   }
-  async run(input: { task: Task; workspacePath: string; context: string; onOutput?: (chunk: string) => void }) {
+  async run(input: { task: Task; workspacePath: string; context: string; environment?: ExecutionEnvironment; onOutput?: (chunk: string) => void }) {
     const prompt = `Forge task ${input.task.id}: ${input.task.title}\n\n${input.task.description ?? ''}\n\nContext:\n${input.context}`;
+    if (input.environment?.execute) {
+      return input.environment.execute({ command: this.command, args: [...this.args, prompt], cwd: input.workspacePath, onOutput: input.onOutput });
+    }
     return await new Promise<{ exitCode: number; output: string }>((resolve) => {
       const child = spawn(this.command, [...this.args, prompt], { cwd: input.workspacePath, stdio: ['ignore', 'pipe', 'pipe'] });
       let output = '';

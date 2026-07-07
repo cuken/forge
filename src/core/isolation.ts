@@ -8,12 +8,25 @@ export interface WorkspaceRef {
   branch: string;
 }
 
+export interface EnvironmentExecInput {
+  command: string;
+  args?: string[];
+  cwd?: string;
+  onOutput?: (chunk: string) => void;
+}
+
+export interface EnvironmentExecResult {
+  exitCode: number;
+  output: string;
+}
+
 export interface ExecutionEnvironment {
   id: string;
   kind: IsolationKind;
   workspacePath: string;
   description: string;
   metadata?: Record<string, string>;
+  execute?(input: EnvironmentExecInput): Promise<EnvironmentExecResult>;
 }
 
 export interface IsolationPolicy {

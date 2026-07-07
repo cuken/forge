@@ -1,3 +1,5 @@
+import type { ExecutionEnvironment } from './isolation.js';
+
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
 export interface ForgeProvider { id: string; kind: string; }
@@ -58,7 +60,7 @@ export interface WorkspaceProvider extends ForgeProvider {
 
 export interface AgentProvider extends ForgeProvider {
   kind: 'agent';
-  run(input: { task: Task; workspacePath: string; context: string; onOutput?: (chunk: string) => void }): Promise<{ exitCode: number; output: string }>;
+  run(input: { task: Task; workspacePath: string; context: string; environment?: ExecutionEnvironment; onOutput?: (chunk: string) => void }): Promise<{ exitCode: number; output: string }>;
 }
 
 export interface ScmProvider extends ForgeProvider {

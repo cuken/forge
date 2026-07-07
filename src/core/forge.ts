@@ -96,7 +96,7 @@ export class ForgeRuntime {
         observer?.(`running agent ${this.deps.agent.id}...\n`);
         const result = await (async () => {
           try {
-            return await this.deps.agent.run({ task, workspacePath: env.workspacePath, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}\nExecution environment: ${env.id} (${env.kind})\n${env.description}`, onOutput: chunk => observer?.(chunk) });
+            return await this.deps.agent.run({ task, workspacePath: env.workspacePath, environment: env, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}\nExecution environment: ${env.id} (${env.kind})\n${env.description}`, onOutput: chunk => observer?.(chunk) });
           } finally {
             await this.deps.isolation?.cleanup?.(env);
           }

@@ -19,6 +19,8 @@ function fakeRunner() {
     if (args[0] === 'create') return { exitCode: 0, stdout: 'container-abc123\n', stderr: '' };
     if (args[0] === 'start') return { exitCode: 0, stdout: 'container-abc123\n', stderr: '' };
     if (args[0] === 'rm') return { exitCode: 0, stdout: 'container-abc123\n', stderr: '' };
+    if (args[0] === 'exec' && args.includes('echo')) return { exitCode: 0, stdout: 'hello\n', stderr: '' };
+    if (args[0] === 'exec') return { exitCode: 0, stdout: '', stderr: '' };
     if (args[0] === '--version') return { exitCode: 0, stdout: 'podman version 5.0.0\n', stderr: '' };
     if (args[0] === 'info') return { exitCode: 0, stdout: 'crun\n', stderr: '' };
     if (args[0] === 'image') return { exitCode: 1, stdout: '', stderr: 'not found' };
@@ -41,7 +43,7 @@ describe('PodmanIsolationProvider', () => {
 
     expect(env).toMatchObject({
       kind: 'container',
-      workspacePath: '/tmp/forge/ws-1',
+      workspacePath: '/workspace',
       metadata: {
         containerId: 'container-abc123',
         image: 'forge-agent:latest',
@@ -55,8 +57,18 @@ describe('PodmanIsolationProvider', () => {
     expect(calls[0].args).toContain('--network');
     expect(calls[0].args).toContain('none');
     expect(calls[0].args.at(-3)).toBe('forge-agent:latest');
-    expect(calls.map(call => call.args[0])).toEqual(['create', 'start', 'rm']);
-    expect(calls[2].args).toEqual(['rm', '-f', 'container-abc123']);
+    expect(calls.map(call => call.args[0])).toEqual(['create', 'start', 'exec', 'rm']);
+    expect(calls[2].args).toEqual(['exec', '--workdir', '/workspace', 'container-abc123', 'sh', '-lc', 'true']);
+    expect(calls[3].args).toEqual(['rm', '-f', 'container-abc123']);
+  });
+
+  it('executes commands inside the ready podman environment', async () => {
+    const { calls, runner } = fakeRunner();
+    const provider = new PodmanIsolationProvider({ runner });
+    const env = await provider.prepare({ task, workspace: { id: 'ws-1', path: '/tmp/forge/ws-1', branch: 'forge/task-123' } });
+
+    await expect(env.execute?.({ command: 'echo', args: ['hello'], cwd: '/workspace' })).resolves.toEqual({ exitCode: 0, output: 'hello\n' });
+    expect(calls.at(-1)?.args).toEqual(['exec', '--workdir', '/workspace', 'container-abc123', 'echo', 'hello']);
   });
 
   it('reports provider-declared podman health checks', async () => {

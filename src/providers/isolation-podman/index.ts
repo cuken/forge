@@ -15,6 +15,7 @@ export interface PodmanIsolationOptions {
   writable?: boolean;
   createArgs?: string[];
   keepAliveCommand?: string[];
+  readyCommand?: string[];
   runner?: PodmanCommandRunner;
 }
 
@@ -64,10 +65,17 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
       throw new Error(`podman start failed: ${(started.stderr || started.stdout).trim()}`);
     }
 
+    const readyCommand = this.options.readyCommand ?? ['sh', '-lc', 'true'];
+    const ready = await this.runner(this.command, ['exec', '--workdir', this.containerWorkspacePath, containerId, ...readyCommand]);
+    if (ready.exitCode !== 0) {
+      await this.runner(this.command, ['rm', '-f', containerId]);
+      throw new Error(`podman environment not ready: ${(ready.stderr || ready.stdout).trim()}`);
+    }
+
     return {
       id: `${this.id}:${containerId}`,
       kind: 'container',
-      workspacePath: input.workspace.path,
+      workspacePath: this.containerWorkspacePath,
       description: `Podman container ${containerName} from ${this.image}; host workspace is mounted at ${this.containerWorkspacePath}.`,
       metadata: {
         containerId,
@@ -78,6 +86,14 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
         branch: input.workspace.branch,
         network,
         writable: String(writable),
+        readyCommand: readyCommand.join(' '),
+      },
+      execute: async execInput => {
+        const cwd = execInput.cwd ?? this.containerWorkspacePath;
+        const result = await this.runner(this.command, ['exec', '--workdir', cwd, containerId, execInput.command, ...(execInput.args ?? [])]);
+        const output = result.stdout + result.stderr;
+        if (output) execInput.onOutput?.(output);
+        return { exitCode: result.exitCode, output };
       },
     };
   }
