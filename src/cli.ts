@@ -61,7 +61,11 @@ task.command('create <title>').option('-d, --description <text>').option('-c, --
 });
 task.command('list').action(async () => { for (const t of await runtime().deps.store.list()) console.log(`${t.id}\t${t.status}\t${t.complexity}\t${t.title}`); });
 task.command('spec <id> <body>').action(async (id, body) => { const t = await runtime().writeSpec(id, body); console.log(`${t.id} ${t.status} ${t.spec?.path}`); });
-task.command('approve <id>').action(async id => { const t = await runtime().approve(id); console.log(`${t.id} ${t.status}`); });
+task.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
+task.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern), null, 2)); });
 task.command('run-ready').action(async () => { console.log(JSON.stringify(await runtime().runReady(), null, 2)); });
+
+program.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
+program.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern), null, 2)); });
 
 program.parseAsync().catch(err => { console.error(err instanceof Error ? err.message : err); process.exit(1); });

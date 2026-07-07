@@ -53,6 +53,8 @@ forge build update forge so that it honors toml files in the config instead of j
 forge task create "Add feature" --complexity small
 forge task create "Risky feature" --complexity medium
 forge task spec <id> "# Spec..."
+forge approve toml
+forge run toml
 forge task approve <id>
 forge task run-ready
 ```

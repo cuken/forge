@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
+import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import type { AgentProvider, ForgeConfig, ForgeProvider, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
@@ -66,9 +67,16 @@ export class ForgeRuntime {
     return this.deps.store.update(taskId, { status: 'awaiting-approval', spec: { path, approved: false } });
   }
 
-  async approve(taskId: string) {
-    const task = await this.deps.store.get(taskId); if (!task?.spec) throw new Error('Task has no spec');
-    return this.deps.store.update(taskId, { status: 'ready', spec: { ...task.spec, approved: true, approvedAt: new Date().toISOString() } });
+  async approve(taskIdOrPattern?: string) {
+    const task = taskIdOrPattern ? await resolveTask(this.deps.store, taskIdOrPattern) : await resolveTask(this.deps.store, undefined, 'awaiting-approval');
+    if (!task.spec) throw new Error('Task has no spec');
+    return this.deps.store.update(task.id, { status: 'ready', spec: { ...task.spec, approved: true, approvedAt: new Date().toISOString() } });
+  }
+
+  async runTask(taskIdOrPattern?: string) {
+    const task = taskIdOrPattern ? await resolveTask(this.deps.store, taskIdOrPattern) : await resolveTask(this.deps.store, undefined, 'ready');
+    if (task.status !== 'ready') throw new Error(`Task is ${task.status}, not ready`);
+    return this.runReady(task.id);
   }
 
   async runReady(taskId?: string) {

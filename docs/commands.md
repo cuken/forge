@@ -94,9 +94,33 @@ Lists local tasks with ID, status, complexity, and title.
 
 Writes `.forge/specs/<id>.md`, attaches it to the task, and moves the task to `awaiting-approval`.
 
-## `forge task approve <id>`
+## `forge approve [pattern]`
 
-Marks a task spec approved and moves the task to `ready`.
+Alias for `forge task approve [pattern]`.
+
+Approves one awaiting task and moves it to `ready`. If exactly one task is awaiting approval, no pattern is needed. If multiple tasks are awaiting approval, pass an ID or unique title fragment.
+
+```bash
+forge approve toml
+```
+
+## `forge run [pattern]`
+
+Alias for `forge task run [pattern]`.
+
+Runs one ready task. If exactly one task is ready, no pattern is needed. If multiple tasks are ready, pass an ID or unique title fragment.
+
+```bash
+forge run toml
+```
+
+## `forge task approve [pattern]`
+
+Marks a task spec approved and moves the task to `ready`. Supports ID or unique title fragment resolution.
+
+## `forge task run [pattern]`
+
+Runs one ready task by ID or unique title fragment.
 
 ## `forge task run-ready`
 
