@@ -18,6 +18,7 @@ Defined in `src/core/health.ts` and `src/core/sync.ts`:
 
 - `DoctorProvider` — declares environment checks for `forge doctor`
 - `SyncProvider` — declares ordered sync tasks for `forge sync`
+- `BuildPlannerProvider` — converts natural-language build requests into task/spec/run plans for `forge build`
 
 Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`.
 
@@ -66,8 +67,15 @@ export class MyAgentProvider implements AgentProvider, DoctorProvider {
 }
 ```
 
+## Build planners
+
+`BuildPlannerProvider` lets Forge accept human-friendly commands without forcing users to coordinate opaque IDs. A planner receives a natural-language request plus optional task name/pattern and returns a `BuildPlan` with title, description, complexity, spec requirement, rationale, and optional spec body.
+
+Initial implementation: `build-planner.heuristic`. Future implementations can survey the repo with code indexes, query memory/context providers, or spawn agents before estimating complexity.
+
 ## Current implementations
 
+- `src/providers/build-heuristic` estimates request complexity and drafts specs for complex tasks.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task.

@@ -44,6 +44,33 @@ Current Git sync tasks:
 
 Sync task execution stops on `blocked` or `failed` results.
 
+## `forge build <request...>`
+
+Alias: `forge b`.
+
+Accepts a natural-language build request, asks the configured build planner provider to turn it into Forge's task/spec/run flow, and then applies the resulting policy.
+
+Options:
+
+- `--name <name>` — hard-define the task title instead of using the planner-generated title
+- `--pattern <pattern>` — pass a provider-specific task matching pattern for future provider use
+- `--auto-approve` — approve generated specs without stopping for human review
+- `--no-run` — create/plan the task without invoking the agent
+
+Current heuristic planner behavior:
+
+- small requests become ready tasks and run immediately by default
+- medium/large requests get a generated spec and stop at `awaiting-approval`
+- provider/config/storage/workflow/gate/memory/indexing/sync/workspace terms increase estimated complexity
+
+Example:
+
+```bash
+forge build update forge so that it honors toml files in the config instead of json config files
+```
+
+This should draft a spec and print the approval command. Future planners may use context maps, memory, survey agents, or LLMs to estimate complexity.
+
 ## `forge task create <title>`
 
 Creates a task in the configured `TaskStore`.

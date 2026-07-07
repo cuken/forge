@@ -28,6 +28,7 @@ Pi keeps a small harness and makes behavior discoverable through project instruc
 - **Capability** — optional interface a provider can implement, such as health checks or sync tasks.
 - **Context** — reusable project/task knowledge to reduce repeated repo discovery.
 - **Sync** — provider-declared reconciliation between local state and declared upstream systems.
+- **Build plan** — provider-generated translation from a natural-language request into task complexity, spec policy, and execution flow.
 
 ## Boundary rule
 
@@ -50,6 +51,7 @@ await git.push('upstream', 'main');
 - `forge init` initializes `.forge/` and Git.
 - `forge doctor` runs provider-declared environment checks.
 - `forge sync` runs provider-declared synchronization tasks.
+- `forge build <request>` turns natural language into the opinionated task/spec/run flow through a build planner provider.
 - `forge task create` creates local tasks and optionally GitHub issues.
 - `forge task spec` writes a spec file and moves a task to approval.
 - `forge task approve` marks the spec approved.

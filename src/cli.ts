@@ -7,9 +7,10 @@ import { GitVcsProvider } from './providers/vcs-git/index.js';
 import { GitWorktreeProvider } from './providers/workspace-git-worktree/index.js';
 import { PiAgentProvider } from './providers/agent-pi/index.js';
 import { GitHubScmProvider } from './providers/scm-github/index.js';
+import { HeuristicBuildPlannerProvider } from './providers/build-heuristic/index.js';
 
 function runtime() {
-  return new ForgeRuntime({ store: new FileTaskStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider() });
+  return new ForgeRuntime({ store: new FileTaskStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider() });
 }
 
 const program = new Command();
@@ -42,6 +43,15 @@ program.command('sync').description('Run provider-declared sync tasks').option('
     if (r.status === 'blocked' || r.status === 'failed') failed = true;
   }
   if (failed) process.exitCode = 1;
+});
+
+program.command('build <request...>').alias('b').description('Plan a natural-language build task and run the Forge flow').option('--name <name>', 'hard-define task title').option('--pattern <pattern>', 'provider-specific task matching pattern').option('--auto-approve', 'approve generated specs without stopping').option('--no-run', 'create/plan task without running implementation').action(async (request: string[], opts) => {
+  const result = await runtime().build({ prompt: request.join(' '), taskName: opts.name, taskPattern: opts.pattern, autoApprove: opts.autoApprove, run: opts.run });
+  console.log(`${result.task.id} ${result.task.status} ${result.task.title}`);
+  console.log(`complexity=${result.plan.complexity} spec=${result.plan.requiresSpec ? 'required' : 'not-required'}`);
+  console.log(result.plan.reason);
+  if (result.task.spec && !result.task.spec.approved) console.log(`spec=${result.task.spec.path} approve with: forge task approve ${result.task.id}`);
+  if (result.runResults) console.log(JSON.stringify(result.runResults, null, 2));
 });
 
 const task = program.command('task');

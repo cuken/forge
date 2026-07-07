@@ -27,6 +27,7 @@ export interface ForgeConfig {
     workspace: string;
     agent: string;
     scm?: string;
+    buildPlanner?: string;
   };
   pi?: { command: string; args: string[] };
   github?: { owner?: string; repo?: string };

@@ -7,6 +7,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - generic core interfaces for tasks, VCS, workspaces, agents, SCM, and stores
 - provider-declared health checks via `forge doctor`
 - provider-declared sync tasks via `forge sync`
+- natural-language build flow via `forge build`
 - filesystem task store
 - Git VCS provider
 - Git worktree workspace provider
@@ -48,6 +49,7 @@ forge sync -m "feat: describe your change"
 forge init
 forge doctor
 forge sync --dry-run
+forge build update forge so that it honors toml files in the config instead of json config files
 forge task create "Add feature" --complexity small
 forge task create "Risky feature" --complexity medium
 forge task spec <id> "# Spec..."
