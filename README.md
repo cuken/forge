@@ -11,6 +11,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - filesystem task store
 - Git VCS provider
 - Git worktree workspace provider
+- host execution isolation provider
 - pi agent provider
 - GitHub issue provider via `gh`
 - spec gate for medium/large tasks

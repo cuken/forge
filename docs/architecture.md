@@ -24,6 +24,7 @@ Pi keeps a small harness and makes behavior discoverable through project instruc
 - **Spec** — human or machine-approved design/evidence gate before execution.
 - **Run** — one execution attempt by an agent.
 - **Workspace** — isolated filesystem/repo location for a task.
+- **Execution environment** — provider-prepared safety boundary where the agent process runs. This may be the host worktree, a container, a remote VM, or another sandbox.
 - **Provider** — implementation of an external capability.
 - **Capability** — optional interface a provider can implement, such as health checks or sync tasks.
 - **Context** — reusable project/task knowledge to reduce repeated repo discovery.
@@ -55,7 +56,7 @@ await git.push('upstream', 'main');
 - `forge task create` creates local tasks and optionally GitHub issues.
 - `forge task spec` writes a spec file and moves a task to approval.
 - `forge task approve` marks the spec approved.
-- `forge task run-ready` creates worktrees and invokes the configured agent for ready tasks.
+- `forge task run-ready` creates worktrees, prepares an execution environment, and invokes the configured agent for ready tasks.
 
 ## Extension direction
 
@@ -66,6 +67,7 @@ Upcoming extensions should remain capability based:
 - `MemoryProvider`
 - `WorkflowProvider`
 - `QueueProvider`
+- `IsolationProvider`
 - `ReviewProvider`
 - `MergeProvider`
 - `PackageProvider`

@@ -9,6 +9,7 @@ Defined in `src/core/types.ts`:
 - `TaskStore` — persist tasks
 - `VcsProvider` — version-control basics
 - `WorkspaceProvider` — create isolated workspaces
+- `IsolationProvider` — prepare the execution environment/safety boundary for agent processes
 - `AgentProvider` — execute agent work
 - `ScmProvider` — source-control-management systems such as GitHub issues
 
@@ -79,5 +80,6 @@ Initial implementation: `build-planner.heuristic`. Future implementations can su
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task.
+- `src/providers/isolation-host` runs agents directly on the host worktree and warns that it is not a sandbox.
 - `src/providers/agent-pi` runs `pi -p` against a task/workspace prompt.
 - `src/providers/scm-github` creates issues and validates GitHub CLI state.

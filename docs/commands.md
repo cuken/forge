@@ -130,7 +130,8 @@ For each ready task:
 
 1. Mark task `running`.
 2. Ask `WorkspaceProvider` to create a workspace.
-3. Ask `AgentProvider` to run with task/workspace/context.
-4. Mark task `reviewing` on success or `failed` on failure.
+3. Ask `IsolationProvider` to prepare the execution environment when configured.
+4. Ask `AgentProvider` to run with task/workspace/environment context.
+5. Mark task `reviewing` on success or `failed` on failure.
 
 Future implementations should replace sequential dispatch with a graph scheduler while preserving provider boundaries.

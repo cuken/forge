@@ -8,9 +8,10 @@ import { GitWorktreeProvider } from './providers/workspace-git-worktree/index.js
 import { PiAgentProvider } from './providers/agent-pi/index.js';
 import { GitHubScmProvider } from './providers/scm-github/index.js';
 import { HeuristicBuildPlannerProvider } from './providers/build-heuristic/index.js';
+import { HostIsolationProvider } from './providers/isolation-host/index.js';
 
 function runtime() {
-  return new ForgeRuntime({ store: new FileTaskStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider() });
+  return new ForgeRuntime({ store: new FileTaskStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: new HostIsolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider() });
 }
 
 const program = new Command();

@@ -2,26 +2,27 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
+import type { IsolationProvider } from './isolation.js';
 import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import type { AgentProvider, ForgeConfig, ForgeProvider, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
     await mkdir(join(this.root, '.forge', 'context'), { recursive: true });
     await this.deps.vcs.init();
     await this.deps.store.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id }, pi: { command: 'pi', args: ['-p'] } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id }, pi: { command: 'pi', args: ['-p'] } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.vcs, this.deps.workspace, this.deps.agent, this.deps.scm, this.deps.buildPlanner].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner].filter(Boolean); }
 
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
@@ -89,11 +90,15 @@ export class ForgeRuntime {
         observer?.('creating workspace...\n');
         const ws = await this.deps.workspace.create({ task });
         observer?.(`workspace ${ws.path} on ${ws.branch}\n`);
+        observer?.('preparing execution environment...\n');
+        const env = this.deps.isolation ? await this.deps.isolation.prepare({ task, workspace: ws }) : { id: 'isolation.none', kind: 'host' as const, workspacePath: ws.path, description: 'No isolation provider configured' };
+        observer?.(`environment ${env.id}: ${env.description}\n`);
         observer?.(`running agent ${this.deps.agent.id}...\n`);
-        const result = await this.deps.agent.run({ task, workspacePath: ws.path, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}`, onOutput: chunk => observer?.(chunk) });
+        const result = await this.deps.agent.run({ task, workspacePath: env.workspacePath, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}\nExecution environment: ${env.id} (${env.kind})\n${env.description}`, onOutput: chunk => observer?.(chunk) });
         observer?.(`agent exited ${result.exitCode}\n`);
+        await this.deps.isolation?.cleanup?.(env);
         await this.deps.store.update(task.id, { status: result.exitCode === 0 ? 'reviewing' : 'failed' });
-        results.push({ task: task.id, workspace: ws, result });
+        results.push({ task: task.id, workspace: ws, environment: env, result });
       } catch (error) {
         await this.deps.store.update(task.id, { status: 'failed' });
         results.push({ task: task.id, error: String(error) });

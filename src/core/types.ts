@@ -25,6 +25,7 @@ export interface ForgeConfig {
     store: string;
     vcs: string;
     workspace: string;
+    isolation?: string;
     agent: string;
     scm?: string;
     buildPlanner?: string;
