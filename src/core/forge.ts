@@ -94,9 +94,14 @@ export class ForgeRuntime {
         const env = this.deps.isolation ? await this.deps.isolation.prepare({ task, workspace: ws }) : { id: 'isolation.none', kind: 'host' as const, workspacePath: ws.path, description: 'No isolation provider configured' };
         observer?.(`environment ${env.id}: ${env.description}\n`);
         observer?.(`running agent ${this.deps.agent.id}...\n`);
-        const result = await this.deps.agent.run({ task, workspacePath: env.workspacePath, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}\nExecution environment: ${env.id} (${env.kind})\n${env.description}`, onOutput: chunk => observer?.(chunk) });
+        const result = await (async () => {
+          try {
+            return await this.deps.agent.run({ task, workspacePath: env.workspacePath, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}\nExecution environment: ${env.id} (${env.kind})\n${env.description}`, onOutput: chunk => observer?.(chunk) });
+          } finally {
+            await this.deps.isolation?.cleanup?.(env);
+          }
+        })();
         observer?.(`agent exited ${result.exitCode}\n`);
-        await this.deps.isolation?.cleanup?.(env);
         await this.deps.store.update(task.id, { status: result.exitCode === 0 ? 'reviewing' : 'failed' });
         results.push({ task: task.id, workspace: ws, environment: env, result });
       } catch (error) {

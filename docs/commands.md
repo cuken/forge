@@ -22,6 +22,7 @@ The CLI does not know about Git, GitHub, or pi. It calls `ForgeRuntime.doctor()`
 Current checks:
 
 - `vcs.git`: git binary, repository, worktree support
+- selected isolation provider via `FORGE_ISOLATION=host|docker|podman`
 - `agent.pi`: pi binary, pi version
 - `scm.github`: gh binary, gh auth, repo detection
 
@@ -130,8 +131,9 @@ For each ready task:
 
 1. Mark task `running`.
 2. Ask `WorkspaceProvider` to create a workspace.
-3. Ask `IsolationProvider` to prepare the execution environment when configured.
+3. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman`. The host provider returns the worktree directly; Docker and Podman providers create and start a task container with the workspace bind-mounted at the container workspace path.
 4. Ask `AgentProvider` to run with task/workspace/environment context.
-5. Mark task `reviewing` on success or `failed` on failure.
+5. Ask the isolation provider to clean up a prepared environment after the agent attempt.
+6. Mark task `reviewing` on success or `failed` on failure.
 
 Future implementations should replace sequential dispatch with a graph scheduler while preserving provider boundaries.

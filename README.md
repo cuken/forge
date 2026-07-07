@@ -12,6 +12,8 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - Git VCS provider
 - Git worktree workspace provider
 - host execution isolation provider
+- Docker execution isolation provider for container-prepared workspaces
+- Podman execution isolation provider for container-prepared workspaces
 - pi agent provider
 - GitHub issue provider via `gh`
 - spec gate for medium/large tasks
@@ -49,6 +51,8 @@ forge sync -m "feat: describe your change"
 ```bash
 forge init
 forge doctor
+FORGE_ISOLATION=docker forge doctor
+FORGE_ISOLATION=podman forge doctor
 forge sync --dry-run
 forge build update forge so that it honors toml files in the config instead of json config files
 forge task create "Add feature" --complexity small

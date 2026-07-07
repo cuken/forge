@@ -81,5 +81,7 @@ Initial implementation: `build-planner.heuristic`. Future implementations can su
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task.
 - `src/providers/isolation-host` runs agents directly on the host worktree and warns that it is not a sandbox.
+- `src/providers/isolation-docker` prepares a Docker container for a task workspace, bind-mounts the workspace at `/workspace` by default, starts the container with network disabled unless policy requests inherited networking, and removes the container during cleanup. It implements `DoctorProvider` with a Docker daemon check.
+- `src/providers/isolation-podman` prepares a Podman container with the task workspace bind-mounted, declares Podman doctor checks, and removes the container during isolation cleanup. With the current `AgentProvider` contract, the provider returns the host workspace path for compatibility while exposing the container ID and in-container workspace path in environment metadata for container-aware agents.
 - `src/providers/agent-pi` runs `pi -p` against a task/workspace prompt.
 - `src/providers/scm-github` creates issues and validates GitHub CLI state.
