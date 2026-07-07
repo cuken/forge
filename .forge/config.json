@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "project": {
+    "name": "forge"
+  },
+  "providers": {
+    "store": "store.filesystem",
+    "vcs": "vcs.git",
+    "workspace": "workspace.git-worktree",
+    "agent": "agent.pi",
+    "scm": "scm.github"
+  },
+  "pi": {
+    "command": "pi",
+    "args": [
+      "-p"
+    ]
+  }
+}

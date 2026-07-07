@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.pi-subagents/
+.forge/tasks/
+.forge/specs/
+../.forge-worktrees/
+.env
+.DS_Store
