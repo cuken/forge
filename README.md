@@ -1,29 +1,53 @@
 # Forge
 
-Forge is a provider-neutral orchestration layer for wide, non-blocking agentic software work.
+Forge is a provider-neutral orchestration layer for wide, non-blocking agentic software work. It coordinates tasks, specs, agents, workspaces, version control, sync, and context so projects can safely go wide.
 
-Initial vertical slice:
+## Current vertical slice
 
 - generic core interfaces for tasks, VCS, workspaces, agents, SCM, and stores
+- provider-declared health checks via `forge doctor`
+- provider-declared sync tasks via `forge sync`
 - filesystem task store
 - Git VCS provider
 - Git worktree workspace provider
 - pi agent provider
 - GitHub issue provider via `gh`
-- CLI commands for `forge init`, task creation, spec approval, and ready-task execution
+- spec gate for medium/large tasks
+
+## Self-augmentation docs
+
+Forge follows the same self-description pattern as pi: keep a small core, document extension points, and let agents safely modify the system from inside the repo.
+
+Start here:
+
+- `AGENTS.md` — standing instructions for agents
+- `docs/agent-guide.md` — how agents should augment Forge
+- `docs/architecture.md` — core concepts and boundaries
+- `docs/providers.md` — provider/capability authoring guide
+- `docs/commands.md` — CLI behavior
+- `docs/documentation-policy.md` — mandatory documentation updates
 
 ## Development
 
 ```bash
 npm test
 npm run build
-node dist/cli.js init
+forge doctor
+```
+
+Publish local work:
+
+```bash
+forge sync --dry-run
+forge sync -m "feat: describe your change"
 ```
 
 ## CLI
 
 ```bash
 forge init
+forge doctor
+forge sync --dry-run
 forge task create "Add feature" --complexity small
 forge task create "Risky feature" --complexity medium
 forge task spec <id> "# Spec..."
