@@ -1,5 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -11,6 +10,7 @@ import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
 import { LeaseConflictError, type LeaseHandle, type LeaseProvider } from '../src/core/lease.js';
 import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
+import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
 import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; repo=false; async isRepo(){return this.repo;} async init(){this.repo=true;} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
@@ -25,8 +25,8 @@ async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
   const agent = new MemoryAgent();
   const changeSet = new MemoryChangeSet();
-  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet, validation });
-  return { rt, agent, changeSet };
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet, validation, workstream: new FileWorkstreamProvider(root) });
+  return { rt, agent, changeSet, root };
 }
 
 async function makeRuntimeWithDiscovery() {
@@ -229,6 +229,34 @@ describe('Forge vertical slice', () => {
     expect(changeSet.accepted).toEqual([]);
     expect((await rt.deps.store.get(task.id))?.status).toBe('reviewing');
     expect((await rt.showRun(runId)).validation?.results[0]).toMatchObject({ status: 'fail', message: 'not ok' });
+  });
+
+  it('summarizes pending human actions with runnable short-fragment commands', async () => {
+    const { rt, root } = await makeRuntime(new MemoryValidation('pass'));
+    await rt.init('demo');
+    const specTask = await rt.createTask('Draft status spec', { complexity: 'medium' });
+    await rt.writeSpec(specTask.id, '# Spec');
+    const approvalTask = await rt.createTask('Approve status spec', { complexity: 'medium' });
+    await rt.writeSpec(approvalTask.id, '# Spec');
+    await rt.approve(approvalTask.id);
+    const runResult = await rt.runTask(approvalTask.id);
+    await rt.validateRun(runResult[0].run!);
+    const deferredTask = await rt.createTask('Retry deferred status task');
+    await rt.deps.runStore!.start({ task: deferredTask, agentId: 'agent.memory' });
+    const [deferredRun] = await rt.deps.runStore!.list({ taskId: deferredTask.id });
+    await rt.deps.runStore!.update(deferredRun.id, { status: 'deferred', finishedAt: new Date().toISOString() });
+    await writeFile(join(root, 'roadmap.json'), JSON.stringify({ items: [{ id: 'base', title: 'Base dependency' }, { id: 'blocked-status-item', title: 'Blocked status item', dependencies: ['base'] }] }));
+    await rt.importWorkstream(join(root, 'roadmap.json'));
+
+    const lines = await rt.status();
+
+    expect(lines).toEqual(expect.arrayContaining([
+      expect.stringMatching(/awaiting approval: Draft status spec -> forge task approve 'draft'/),
+      expect.stringMatching(/awaiting review: Approve status spec -> forge runs review 'approve'/),
+      expect.stringMatching(/awaiting accept: Approve status spec -> forge runs accept 'approve' -m 'accept approve'/),
+      expect.stringMatching(/deferred: Retry deferred status task -> forge task run 'retry'/),
+      'blocked workstream: Blocked status item (waiting on base) -> forge workstream enqueue blocked-status-item',
+    ]));
   });
 
   it('supports dry-run acceptance without marking the task done', async () => {

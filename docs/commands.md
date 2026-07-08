@@ -48,6 +48,27 @@ forge isolation status
 
 Output includes the provider id, aggregate readiness (`pass`, `warn`, or `fail`), and provider check details.
 
+## `forge status`
+
+Lists pending human actions and prints a ready-to-run command on every line. It summarizes tasks needing specs, specs awaiting approval, succeeded runs awaiting review/validation/acceptance, deferred runs ready to retry, and planned workstream items blocked on unfinished dependencies. Commands use unique title fragments where task/run resolution supports them, so users do not need to copy full IDs.
+
+Example:
+
+```bash
+forge status
+```
+
+Example output:
+
+```text
+awaiting approval: Add TOML config -> forge task approve 'toml'
+awaiting validation: Add status command -> forge runs validate 'status'
+deferred: Update shared provider -> forge task run 'shared'
+blocked workstream: Add final docs (waiting on core-slice) -> forge workstream enqueue final-docs
+```
+
+If nothing is waiting on a human, Forge prints `no pending human actions`.
+
 ## `forge sync`
 
 Runs provider-declared sync tasks to reconcile local state with declared upstream systems.

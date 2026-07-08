@@ -83,6 +83,12 @@ isolation.command('status').description('Report the selected isolation provider 
   if (status.readiness === 'fail') process.exitCode = 1;
 });
 
+program.command('status').description('List pending human actions with ready-to-run next commands').action(async () => {
+  const lines = await runtime().status();
+  if (!lines.length) console.log('no pending human actions');
+  for (const line of lines) console.log(line);
+});
+
 program.command('sync').description('Run provider-declared sync tasks').option('-m, --message <message>', 'commit/sync message').option('--dry-run', 'show sync work without changing state').action(async (opts) => {
   const results = await runtime().sync({ message: opts.message, dryRun: opts.dryRun });
   let failed = false;

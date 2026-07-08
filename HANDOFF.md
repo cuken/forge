@@ -153,6 +153,7 @@ npm run build
 npm run podman:image
 forge doctor
 forge isolation status
+forge status
 forge build <request...> --auto-approve
 forge task list
 forge task run-ready --parallel 2

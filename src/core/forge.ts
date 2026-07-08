@@ -10,7 +10,7 @@ import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
 import { hasWorkstream, hasWorkstreamPlanner, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
-import type { AgentProvider, ForgeConfig, ForgeProvider, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
+import type { AgentProvider, ForgeConfig, ForgeProvider, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
@@ -129,6 +129,71 @@ export class ForgeRuntime {
 
   async listWorkstream(): Promise<WorkstreamItem[]> {
     return this.workstreamProvider().list();
+  }
+
+  private shortFragment(value: string, peers: string[]): string {
+    const words = value.toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? [value.toLowerCase()];
+    for (let length = 1; length <= words.length; length++) {
+      for (let start = 0; start <= words.length - length; start++) {
+        const fragment = words.slice(start, start + length).join(' ');
+        if (fragment && peers.filter(peer => peer.toLowerCase().includes(fragment)).length === 1) return fragment;
+      }
+    }
+    return value.slice(0, 32);
+  }
+
+  private shellQuote(value: string): string {
+    return `'${value.replace(/'/g, `'"'"'`)}'`;
+  }
+
+  private runCommand(run: RunRecord, command: string, peers: RunRecord[]): string {
+    const fragment = this.shortFragment(run.taskTitle, peers.map(peer => peer.taskTitle));
+    return `forge runs ${command} ${this.shellQuote(fragment)}`;
+  }
+
+  async status(): Promise<string[]> {
+    const lines: string[] = [];
+    const tasks = await this.deps.store.list();
+    const runs = this.deps.runStore ? await this.deps.runStore.list() : [];
+    const taskById = new Map(tasks.map(task => [task.id, task]));
+    const taskTitles = tasks.map(task => task.title);
+    const taskRef = (task: Task) => this.shellQuote(this.shortFragment(task.title, taskTitles));
+
+    for (const task of tasks.filter(task => task.status === 'needs-spec')) lines.push(`needs spec: ${task.title} -> forge task spec ${taskRef(task)} '<spec body>'`);
+    for (const task of tasks.filter(task => task.status === 'awaiting-approval')) lines.push(`awaiting approval: ${task.title} -> forge task approve ${taskRef(task)}`);
+
+    const succeeded = runs.filter(run => run.status === 'succeeded' && !run.acceptance);
+    for (const run of succeeded) {
+      const task = taskById.get(run.taskId);
+      if (task?.status !== 'reviewing') continue;
+      lines.push(`awaiting review: ${run.taskTitle} -> ${this.runCommand(run, 'review', succeeded)}`);
+      const validationPassed = run.validation?.results.length === 0 || run.validation?.results.every(result => result.status === 'pass');
+      if (!run.validation || run.validation.results.some(result => result.status === 'fail')) lines.push(`awaiting validation: ${run.taskTitle} -> ${this.runCommand(run, 'validate', succeeded)}`);
+      if (validationPassed) lines.push(`awaiting accept: ${run.taskTitle} -> ${this.runCommand(run, 'accept', succeeded)} -m ${this.shellQuote(`accept ${this.shortFragment(run.taskTitle, succeeded.map(peer => peer.taskTitle))}`)}`);
+    }
+
+    for (const run of runs.filter(run => run.status === 'deferred')) {
+      const task = taskById.get(run.taskId);
+      const command = task ? `forge task run ${taskRef(task)}` : this.runCommand(run, 'show', runs);
+      lines.push(`deferred: ${run.taskTitle} -> ${command}`);
+    }
+
+    const workstream = this.providers().find(provider => hasWorkstream(provider));
+    if (workstream && hasWorkstream(workstream)) {
+      const items = await workstream.list();
+      const byId = new Map(items.map(item => [item.id, item]));
+      for (const item of items.filter(item => item.status === 'planned' && item.dependencies.length)) {
+        const blockedBy = item.dependencies.filter(depId => {
+          const dep = byId.get(depId);
+          if (!dep) return false;
+          if (dep.status !== 'queued' || !dep.taskId) return true;
+          return taskById.get(dep.taskId)?.status !== 'done';
+        });
+        if (blockedBy.length) lines.push(`blocked workstream: ${item.title} (waiting on ${blockedBy.join(', ')}) -> forge workstream enqueue ${item.id}`);
+      }
+    }
+
+    return lines;
   }
 
   async enqueueWorkstream(ids?: string[]): Promise<Task[]> {
