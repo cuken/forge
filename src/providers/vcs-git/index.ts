@@ -13,9 +13,14 @@ export class GitVcsProvider implements VcsProvider, DoctorProvider, SyncProvider
   async init() { if (!(await this.isRepo())) await this.git.init(); }
   async currentBranch() { const b = await this.git.branchLocal(); return b.current || 'main'; }
   async status() { const s = await this.git.status(); return { clean: s.isClean(), summary: s.files.map(f => `${f.working_dir || f.index} ${f.path}`).join('\n') }; }
-  checks() {
+  checks(input: { scope?: 'host' | 'workspace' } = {}) {
+    const binary = { id: `${this.id}:binary`, label: 'Git binary', run: async () => (await commandExists('git')) ? { id: `${this.id}:binary`, status: 'pass' as const, message: 'git is available' } : { id: `${this.id}:binary`, status: 'fail' as const, message: 'git is not available' } };
+    if (input.scope === 'workspace') return [
+      binary,
+      { id: `${this.id}:workspace`, label: 'Git metadata in task workspace', run: async () => (await this.isRepo()) ? { id: `${this.id}:workspace`, status: 'pass' as const, message: 'workspace has accessible git metadata' } : { id: `${this.id}:workspace`, status: 'warn' as const, message: 'git metadata is not accessible in this task workspace; this is expected for some isolated containers and is not an implementation failure' } },
+    ];
     return [
-      { id: `${this.id}:binary`, label: 'Git binary', run: async () => (await commandExists('git')) ? { id: `${this.id}:binary`, status: 'pass' as const, message: 'git is available' } : { id: `${this.id}:binary`, status: 'fail' as const, message: 'git is not available' } },
+      binary,
       { id: `${this.id}:repo`, label: 'Git repository', run: async () => (await this.isRepo()) ? { id: `${this.id}:repo`, status: 'pass' as const, message: 'current directory is a git repository' } : { id: `${this.id}:repo`, status: 'warn' as const, message: 'current directory is not a git repository; forge init will run git init' } },
       { id: `${this.id}:worktree`, label: 'Git worktree support', run: async () => { const r = await runCommand('git', ['worktree', 'list'], { cwd: this.root }); return r.exitCode === 0 ? { id: `${this.id}:worktree`, status: 'pass' as const, message: 'git worktree is available' } : { id: `${this.id}:worktree`, status: 'warn' as const, message: 'git worktree unavailable until repository exists', detail: r.stderr || r.stdout }; } },
     ];

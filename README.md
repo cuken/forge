@@ -59,6 +59,8 @@ npm test
 npm run build
 npm run podman:image
 forge doctor
+# inside isolated task containers, use workspace-scoped checks:
+forge doctor --scope workspace
 ```
 
 Publish local work:
@@ -73,6 +75,7 @@ forge sync -m "feat: describe your change"
 ```bash
 forge init
 forge doctor
+forge doctor --scope workspace # container/task workspace checks; host doctor remains authoritative
 forge isolation status
 FORGE_ISOLATION=docker forge doctor
 FORGE_ISOLATION=podman forge isolation status

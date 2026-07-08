@@ -4,7 +4,7 @@ import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type Bui
 import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type ChangeSetSummary } from './changes.js';
 import { hasTaskDiscovery, type TaskDiscoveryProvider } from './discovery.js';
 import { hasGate, type GateDecision, type GateDecisionKind, type GateProvider, type GateSubject, type PendingGateDecision } from './gate.js';
-import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
+import { hasDoctor, runChecks, type DoctorInput, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
 import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } from './lease.js';
 import { buildLifecyclePayload, hasLifecycleHooks, type LifecycleHookEvent, type LifecycleHookProvider } from './lifecycle.js';
@@ -140,8 +140,8 @@ export class ForgeRuntime {
     return { release: updated, target, ref, review };
   }
 
-  async doctor(): Promise<HealthCheckResult[]> {
-    const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
+  async doctor(input: DoctorInput = {}): Promise<HealthCheckResult[]> {
+    const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks(input) : []);
     return runChecks(checks);
   }
 

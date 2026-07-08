@@ -94,7 +94,8 @@ export class DockerIsolationProvider implements IsolationProvider, DoctorProvide
     }
   }
 
-  checks(): HealthCheck[] {
+  checks(input: { scope?: 'host' | 'workspace' } = {}): HealthCheck[] {
+    if (input.scope === 'workspace') return [];
     return [{
       id: `${this.id}:daemon`,
       label: 'Docker daemon',

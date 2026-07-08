@@ -25,7 +25,8 @@ export class GitWorktreeChangeSetProvider implements ChangeSetProvider, DoctorPr
     this.probes = { readFile: probes.readFile ?? readFile, access: probes.access ?? access, runCommand: probes.runCommand ?? runCommand };
   }
 
-  checks(): HealthCheck[] {
+  checks(input: { scope?: 'host' | 'workspace' } = {}): HealthCheck[] {
+    if (input.scope === 'workspace') return [];
     return [{
       id: `${this.id}:metadata`,
       label: 'Git worktree metadata for acceptance',

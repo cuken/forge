@@ -7,6 +7,12 @@ export interface HealthCheckResult {
   detail?: string;
 }
 
+export type DoctorScope = 'host' | 'workspace';
+
+export interface DoctorInput {
+  scope?: DoctorScope;
+}
+
 export interface HealthCheck {
   id: string;
   label: string;
@@ -14,7 +20,7 @@ export interface HealthCheck {
 }
 
 export interface DoctorProvider {
-  checks(): HealthCheck[];
+  checks(input?: DoctorInput): HealthCheck[];
 }
 
 export function hasDoctor(value: unknown): value is DoctorProvider {

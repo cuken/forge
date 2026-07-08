@@ -12,7 +12,8 @@ export class GitHubScmProvider implements ScmProvider, DoctorProvider, ReleaseVc
   kind = 'scm' as const;
   constructor(private config: GitHubConfig = {}, private runner: Runner = runCommand) {}
 
-  checks() {
+  checks(input: { scope?: 'host' | 'workspace' } = {}) {
+    if (input.scope === 'workspace') return [];
     return [
       { id: `${this.id}:gh-binary`, label: 'GitHub CLI', run: async () => (await commandExists('gh')) ? { id: `${this.id}:gh-binary`, status: 'pass' as const, message: 'gh is available' } : { id: `${this.id}:gh-binary`, status: 'fail' as const, message: 'gh is not available' } },
       { id: `${this.id}:auth`, label: 'GitHub auth', run: async () => { const r = await this.runner('gh', ['auth', 'status']); return r.exitCode === 0 ? { id: `${this.id}:auth`, status: 'pass' as const, message: 'gh auth is configured' } : { id: `${this.id}:auth`, status: 'warn' as const, message: 'gh auth is not configured', detail: r.stderr || r.stdout }; } },

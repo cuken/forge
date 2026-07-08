@@ -142,8 +142,9 @@ program.command('init').option('-n, --name <name>').action(async (opts) => {
   console.log(`Initialized Forge project ${cfg.project.name}`);
 });
 
-program.command('doctor').description('Run provider-declared environment checks').action(async () => {
-  const results = await runtime().doctor();
+program.command('doctor').description('Run provider-declared environment checks').option('--scope <scope>', 'check scope: host (authoritative) or workspace (container/task workspace)', 'host').action(async (opts) => {
+  if (opts.scope !== 'host' && opts.scope !== 'workspace') throw new Error(`Unknown doctor scope '${opts.scope}'. Expected host or workspace.`);
+  const results = await runtime().doctor({ scope: opts.scope });
   let failed = false;
   for (const r of results) {
     const mark = r.status === 'pass' ? '✓' : r.status === 'warn' ? '!' : '✗';

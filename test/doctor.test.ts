@@ -19,4 +19,10 @@ describe('doctor', () => {
     const rt = new ForgeRuntime({ store, vcs, workspace, agent, notification: new ConsoleNotificationProvider('stderr') });
     await expect(rt.doctor()).resolves.toContainEqual({ id:'notification.console:channel', status:'pass', message:'stderr notification channel is writable' });
   });
+
+  it('passes the requested doctor scope to providers', async () => {
+    const scopedAgent: AgentProvider & DoctorProvider = { id:'agent.scoped', kind:'agent', run:async()=>({exitCode:0, output:''}), checks:(input)=>[{ id:'agent.scoped:scope', label:'scope', run:async()=>({ id:'agent.scoped:scope', status:'pass', message:`scope=${input?.scope ?? 'host'}` }) }] };
+    const rt = new ForgeRuntime({ store, vcs, workspace, agent: scopedAgent });
+    await expect(rt.doctor({ scope: 'workspace' })).resolves.toEqual([{ id:'agent.scoped:scope', status:'pass', message:'scope=workspace' }]);
+  });
 });

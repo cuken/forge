@@ -52,7 +52,7 @@ export class GitHubIssuesGateProvider implements GateProvider {
     return { providerId: this.id, gateId: String(issue.number), kind, status: decided?.status ?? 'pending', taskId: metadata.taskId ?? input.task?.id ?? '', runId: metadata.runId ?? input.run?.id, decidedAt: decided?.at, decidedBy: decided?.by, message: decided?.message ?? (decided ? `GitHub issue #${issue.number} ${decided.status}` : `Waiting for GitHub issue #${issue.number}`), metadata: decisionMetadata };
   }
 
-  checks(): HealthCheck[] { return [
+  checks(input: { scope?: 'host' | 'workspace' } = {}): HealthCheck[] { if (input.scope === 'workspace') return []; return [
     { id: 'github-gate:gh', label: 'GitHub CLI auth', run: async () => (await resolveGitHubToken()) ? { id: 'github-gate:gh', status: 'pass', message: 'GitHub auth available via env or gh' } : { id: 'github-gate:gh', status: 'fail', message: 'No GitHub auth: set GITHUB_TOKEN/GH_TOKEN or run gh auth login' } },
     { id: 'github-gate:config', label: 'GitHub gate repository config', run: async () => this.owner() && this.repo() ? { id: 'github-gate:config', status: 'pass', message: `GitHub repo ${this.owner()}/${this.repo()} configured` } : { id: 'github-gate:config', status: 'fail', message: '[github] owner and repo are required' } },
   ]; }

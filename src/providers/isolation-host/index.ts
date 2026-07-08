@@ -16,7 +16,8 @@ export class HostIsolationProvider implements IsolationProvider, DoctorProvider 
     };
   }
 
-  checks() {
+  checks(input: { scope?: 'host' | 'workspace' } = {}) {
+    if (input.scope === 'workspace') return [];
     return [{
       id: `${this.id}:available`,
       label: 'Host isolation available',

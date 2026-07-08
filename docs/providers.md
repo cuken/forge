@@ -84,7 +84,10 @@ export class MyAgentProvider implements AgentProvider, DoctorProvider {
     return { exitCode: 0, output: 'done' };
   }
 
-  checks() {
+  checks(input: { scope?: 'host' | 'workspace' } = {}) {
+    if (input.scope === 'workspace') {
+      // Optionally return only checks that are meaningful inside a mounted task workspace.
+    }
     return [{
       id: `${this.id}:available`,
       label: 'My agent available',
@@ -93,6 +96,8 @@ export class MyAgentProvider implements AgentProvider, DoctorProvider {
   }
 }
 ```
+
+`DoctorProvider.checks` receives an optional scope. `host` (the default) is authoritative for infrastructure and publishing readiness. `workspace` is for isolated task containers and should skip or downgrade host-only requirements such as container engines, GitHub auth, or host `.git` metadata while retaining checks that validate the mounted workspace itself.
 
 ## Build planners
 

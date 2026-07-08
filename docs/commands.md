@@ -17,7 +17,22 @@ Current Git implementation runs `git init` if the directory is not already a Git
 
 Runs provider-declared environment checks.
 
-The CLI does not know about Git, GitHub, or pi. It calls `ForgeRuntime.doctor()`, which discovers providers implementing `DoctorProvider`.
+By default, `forge doctor` runs the authoritative host scope. Use this on the host before sync/push and for infrastructure failures:
+
+```bash
+forge doctor
+# equivalent: forge doctor --scope host
+```
+
+Agents working inside isolated task containers should use the workspace scope:
+
+```bash
+forge doctor --scope workspace
+```
+
+Workspace scope is intentionally container-aware. It focuses on checks that are meaningful from the mounted task workspace and suppresses host-only readiness checks such as Podman/Docker availability, GitHub CLI/auth, gate/workstream GitHub access, and host worktree metadata used by review/accept. Missing host tools or inaccessible host `.git` metadata in this scope should be treated as expected container limitations, not implementation failures. Host `forge doctor` remains authoritative for publishing, acceptance, isolation-provider health, GitHub auth, and host VCS metadata.
+
+The CLI does not hardcode Git, GitHub, or pi validation logic. It calls `ForgeRuntime.doctor({ scope })`, which discovers providers implementing `DoctorProvider`.
 
 Current checks:
 
@@ -51,9 +66,9 @@ End-to-end notification workflow:
 4. Receive notifications from the configured channel: console notifications are printed to `stderr` or `stdout`; filesystem notifications are durable audit records in `.forge/audit.log`.
 5. Audit filesystem notifications by reading `.forge/audit.log` as JSON Lines. Each line is one event and can be filtered by `event`, `task.id`, `run.id`, or failure metadata.
 
-- `vcs.git`: git binary, repository, worktree support
-- `change-set.git-worktree`: git metadata and worktree `.git` pointer accessibility needed by `forge runs review` and `forge runs accept`; this catches container/worktree mounts where Git can see the checkout but the referenced metadata is missing or inaccessible
-- selected isolation provider via `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml`
+- `vcs.git`: host scope checks git binary, repository, and worktree support; workspace scope checks git availability and reports inaccessible task-workspace metadata as a warning with container guidance
+- `change-set.git-worktree`: host scope checks git metadata and worktree `.git` pointer accessibility needed by `forge runs review` and `forge runs accept`; workspace scope skips this host-only acceptance check
+- selected isolation provider via `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml` (host scope only)
 - selected notification provider: console stream writability for `notification.console`, or audit channel plus `.forge/audit.log` writability for `notification.filesystem`
 - `agent.pi`: pi binary, pi version
 - `scm.github`: gh binary, gh auth, repo detection

@@ -106,7 +106,7 @@ export class GitHubIssuesWorkstreamProvider implements WorkstreamProvider {
     await this.transport.request('POST', `${this.issuesPath()}/${issue.number}/comments`, { body: completionComment(input) });
   }
 
-  checks(): HealthCheck[] { return [
+  checks(input: { scope?: 'host' | 'workspace' } = {}): HealthCheck[] { if (input.scope === 'workspace') return []; return [
     { id: 'github-workstream:token', label: 'GitHub token', run: async () => (await resolveGitHubToken()) ? { id: 'github-workstream:token', status: 'pass', message: 'GitHub token available (env or gh auth)' } : { id: 'github-workstream:token', status: 'fail', message: 'No GitHub token: set GITHUB_TOKEN/GH_TOKEN or run gh auth login' } },
     { id: 'github-workstream:config', label: 'GitHub repository config', run: async () => this.owner() && this.repo() ? { id: 'github-workstream:config', status: 'pass', message: `GitHub repo ${this.owner()}/${this.repo()} configured` } : { id: 'github-workstream:config', status: 'fail', message: '[github] owner and repo are required' } },
   ]; }

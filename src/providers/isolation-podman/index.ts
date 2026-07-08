@@ -139,7 +139,8 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
     if (removed.exitCode !== 0) throw new Error(`podman cleanup failed: ${(removed.stderr || removed.stdout).trim()}`);
   }
 
-  checks() {
+  checks(input: { scope?: 'host' | 'workspace' } = {}) {
+    if (input.scope === 'workspace') return [];
     return [
       {
         id: `${this.id}:binary`,
