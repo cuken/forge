@@ -39,6 +39,7 @@ export interface ForgeConfig {
     lease?: string;
     workstream?: string;
     workstreamPlanner?: string;
+    notification?: string;
   };
   pi?: { command: string; args: string[] };
   github?: { owner?: string; repo?: string };

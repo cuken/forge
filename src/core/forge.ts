@@ -6,6 +6,7 @@ import { hasTaskDiscovery, type TaskDiscoveryProvider } from './discovery.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
 import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } from './lease.js';
+import { hasNotification, type NotificationProvider, type RunNotificationEvent } from './notification.js';
 import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
@@ -14,7 +15,7 @@ import type { AgentProvider, ForgeConfig, ForgeProvider, RunRecord, RunStore, Sc
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; notification?: NotificationProvider & ForgeProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -22,13 +23,13 @@ export class ForgeRuntime {
     await this.deps.vcs.init();
     await this.deps.store.init();
     await this.deps.runStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, notification: this.deps.notification?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner, this.deps.notification].filter(Boolean); }
 
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
@@ -57,6 +58,16 @@ export class ForgeRuntime {
   private leaseProvider(): LeaseProvider | undefined {
     const provider = this.providers().find(provider => hasLease(provider));
     return provider && hasLease(provider) ? provider : undefined;
+  }
+
+  private async notifyRun(event: RunNotificationEvent, input: { task: Task; run?: RunRecord; message: string }) {
+    await Promise.all(this.providers().filter(provider => hasNotification(provider)).map(async provider => {
+      try {
+        await provider.notifyRun({ event, task: input.task, run: input.run, message: input.message });
+      } catch {
+        // Notifications are best-effort lifecycle side effects; provider failures must not alter run state.
+      }
+    }));
   }
 
   async leaseStatus() {
@@ -372,6 +383,7 @@ export class ForgeRuntime {
     const runOne = async (task: Task) => {
       observer?.(`starting task ${task.id}: ${task.title}\n`);
       const run = await this.deps.runStore?.start({ task, agentId: this.deps.agent.id });
+      await this.notifyRun('run.started', { task, run, message: `started task ${task.id}: ${task.title}` });
       const outputWrites: Promise<void>[] = [];
       const emit = async (chunk: string) => { observer?.(chunk); if (run) await this.deps.runStore?.appendLog(run.id, chunk); };
       const capture = (chunk: string) => { outputWrites.push(emit(chunk)); };
@@ -392,7 +404,8 @@ export class ForgeRuntime {
               if (Date.now() >= deadline) {
                 await emit(`lease wait exceeded ${leaseWaitMs}ms, deferring task: ${error.message}\n`);
                 await this.deps.store.update(task.id, { status: 'ready' });
-                await this.deps.runStore?.update(run!.id, { status: 'deferred', error: `lease wait timed out: ${error.message}`, finishedAt: new Date().toISOString() });
+                const deferredRun = await this.deps.runStore?.update(run!.id, { status: 'deferred', error: `lease wait timed out: ${error.message}`, finishedAt: new Date().toISOString() });
+                await this.notifyRun('run.deferred', { task, run: deferredRun ?? run, message: `deferred task ${task.id}: ${error.message}` });
                 return { task: task.id, run: run?.id, deferred: true, error: error.message };
               }
               if (Date.now() - lastLoggedAt >= 10_000) {
@@ -407,11 +420,13 @@ export class ForgeRuntime {
         }
         await emit('creating workspace...\n');
         const ws = await this.deps.workspace.create({ task });
-        await this.deps.runStore?.update(run!.id, { workspace: ws });
+        const workspaceRun = await this.deps.runStore?.update(run!.id, { workspace: ws });
+        await this.notifyRun('run.workspace-created', { task, run: workspaceRun ?? run, message: `workspace ${ws.path} on ${ws.branch}` });
         await emit(`workspace ${ws.path} on ${ws.branch}\n`);
         await emit('preparing execution environment...\n');
         const env = this.deps.isolation ? await this.deps.isolation.prepare({ task, workspace: ws }) : { id: 'isolation.none', kind: 'host' as const, workspacePath: ws.path, description: 'No isolation provider configured' };
-        await this.deps.runStore?.update(run!.id, { environment: env });
+        const environmentRun = await this.deps.runStore?.update(run!.id, { environment: env });
+        await this.notifyRun('run.environment-prepared', { task, run: environmentRun ?? run, message: `environment ${env.id}: ${env.description}` });
         await emit(`environment ${env.id}: ${env.description}\n`);
         await emit(`running agent ${this.deps.agent.id}...\n`);
         const result = await (async () => {
@@ -426,11 +441,13 @@ export class ForgeRuntime {
         await emit(`agent exited ${result.exitCode}\n`);
         const status = result.exitCode === 0 ? 'reviewing' : 'failed';
         await this.deps.store.update(task.id, { status });
-        await this.deps.runStore?.update(run!.id, { status: result.exitCode === 0 ? 'succeeded' : 'failed', exitCode: result.exitCode, finishedAt: new Date().toISOString() });
+        const completedRun = await this.deps.runStore?.update(run!.id, { status: result.exitCode === 0 ? 'succeeded' : 'failed', exitCode: result.exitCode, finishedAt: new Date().toISOString() });
+        await this.notifyRun(result.exitCode === 0 ? 'run.succeeded' : 'run.failed', { task, run: completedRun ?? run, message: `agent exited ${result.exitCode}` });
         return { task: task.id, run: run?.id, workspace: ws, environment: env, result };
       } catch (error) {
         await this.deps.store.update(task.id, { status: 'failed' });
-        await this.deps.runStore?.update(run!.id, { status: 'failed', error: String(error), finishedAt: new Date().toISOString() });
+        const failedRun = await this.deps.runStore?.update(run!.id, { status: 'failed', error: String(error), finishedAt: new Date().toISOString() });
+        await this.notifyRun('run.failed', { task, run: failedRun ?? run, message: String(error) });
         return { task: task.id, run: run?.id, error: String(error) };
       } finally {
         if (lease) {

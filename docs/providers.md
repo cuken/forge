@@ -18,6 +18,7 @@ Defined in `src/core/types.ts`:
 - `LeaseProvider` — acquire and release provider-neutral resource scope leases around task runs
 - `WorkstreamProvider` — import and list provider-neutral roadmap/workstream backlog items before they are enqueued as Forge tasks
 - `WorkstreamPlannerProvider` — turn a natural-language goal into workstream items, optionally asking clarifying questions through a generic channel
+- `NotificationProvider` — receive provider-neutral run lifecycle notifications without coupling runtime orchestration to a delivery channel
 
 ## Current optional capabilities
 
@@ -30,6 +31,7 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `LeaseProvider` — leases discovered resource scopes before workspace/isolation/agent execution and releases them after the run completes or fails
 - `WorkstreamProvider` — stores planned work items with dependencies and complexity for later task creation
 - `WorkstreamPlannerProvider` — plans workstream items from a prompt for `forge workstream plan`, relaying clarifying questions through the caller-supplied `ask` channel
+- `NotificationProvider` — receives best-effort run lifecycle events such as started, workspace-created, environment-prepared, deferred, succeeded, and failed
 
 Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`.
 
@@ -133,6 +135,14 @@ Future implementations can back the same interface with Jira or any tracker that
 `ForgeRuntime.planWorkstream()` supplies project context from `.forge/context/project-summary.md`, merges the returned drafts into the existing backlog without touching queued items, and renames colliding ids (remapping intra-plan dependencies).
 
 Built-in implementation: `workstream-planner.pi`, which runs the configured pi command twice — once to elicit at most four clarifying questions as JSON, once (with the answers) to produce the plan JSON. It parses JSON leniently from chatty agent output and normalizes complexity to the standard `trivial|small|medium|large` gates. Future implementations can wrap other agents, planning services, or fully deterministic templates.
+
+## Run lifecycle notifications
+
+`NotificationProvider` lets providers send lifecycle updates about Forge runs without the core knowing about chat, email, webhooks, terminals, or any other concrete channel. The contract is `notifyRun({ event, task, run?, message })`, where `event` is one of `run.started`, `run.workspace-created`, `run.environment-prepared`, `run.deferred`, `run.succeeded`, or `run.failed`.
+
+`ForgeRuntime` discovers this capability structurally with `hasNotification()`. Providers that do not implement it are ignored. Notification delivery is best-effort: provider failures are swallowed so a broken notification backend cannot change task/run state or mask the real agent result. Providers should therefore log or track their own delivery errors if users need diagnostics.
+
+Future implementations can deliver the same neutral events through any channel or service while keeping runtime orchestration provider-neutral.
 
 ## Current implementations
 
