@@ -9,13 +9,14 @@ export async function commandExists(command: string): Promise<boolean> {
   return result.exitCode === 0;
 }
 
-export async function runCommand(command: string, args: string[] = [], options: { cwd?: string; shell?: boolean } = {}) {
+export async function runCommand(command: string, args: string[] = [], options: { cwd?: string; shell?: boolean; stdin?: string } = {}) {
   return await new Promise<CommandResult>((resolve) => {
-    const child = spawn(command, args, { cwd: options.cwd, shell: options.shell, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd: options.cwd, shell: options.shell, stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
-    child.stdout.on('data', d => stdout += d.toString());
-    child.stderr.on('data', d => stderr += d.toString());
+    child.stdout?.on('data', d => stdout += d.toString());
+    child.stderr?.on('data', d => stderr += d.toString());
     child.on('close', code => resolve({ exitCode: code ?? 1, stdout, stderr }));
     child.on('error', err => resolve({ exitCode: 1, stdout, stderr: String(err) }));
+    if (options.stdin !== undefined) child.stdin?.end(options.stdin);
   });
 }
