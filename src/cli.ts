@@ -28,6 +28,7 @@ import { GitHubIssuesGateProvider } from './providers/gate-github-issues/index.j
 import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
 import { PiSpecProvider } from './providers/spec-pi/index.js';
 import { ConsoleNotificationProvider, type ConsoleNotificationChannel } from './providers/notification-console/index.js';
+import { FilesystemNotificationProvider, type FilesystemNotificationChannel } from './providers/notification-filesystem/index.js';
 import { createInterface } from 'node:readline/promises';
 import type { AcceptChangeSetResult } from './core/changes.js';
 
@@ -92,10 +93,16 @@ export function notificationProvider() {
   const config = readForgeConfigSync();
   const requested = config?.providers?.notification ?? (config ? undefined : 'console');
   if (!requested) return undefined;
-  if (requested !== 'console' && requested !== 'notification.console') throw new Error(`Unknown notification provider '${requested}'. Expected console or notification.console.`);
-  const channel = config?.notifications?.channel ?? 'stderr';
-  if (channel !== 'stdout' && channel !== 'stderr') throw new Error(`Unknown notification channel '${channel}'. Expected stdout or stderr.`);
-  return new ConsoleNotificationProvider(channel as ConsoleNotificationChannel);
+  const channel = config?.notifications?.channel ?? (requested === 'filesystem' || requested === 'notification.filesystem' ? 'audit' : 'stderr');
+  if (requested === 'console' || requested === 'notification.console') {
+    if (channel !== 'stdout' && channel !== 'stderr') throw new Error(`Unknown notification channel '${channel}'. Expected stdout or stderr for console notifications.`);
+    return new ConsoleNotificationProvider(channel as ConsoleNotificationChannel);
+  }
+  if (requested === 'filesystem' || requested === 'notification.filesystem') {
+    if (channel !== 'audit') throw new Error(`Unknown notification channel '${channel}'. Expected audit for filesystem notifications.`);
+    return new FilesystemNotificationProvider(process.cwd(), channel as FilesystemNotificationChannel);
+  }
+  throw new Error(`Unknown notification provider '${requested}'. Expected console, filesystem, notification.console, or notification.filesystem.`);
 }
 
 function runtime() {

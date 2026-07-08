@@ -49,6 +49,9 @@ describe('Forge config loading', () => {
       await writeFile(join(root, '.forge', 'config.toml'), '[providers]\nnotification = "console"\n\n[notifications]\nchannel = "stdout"\n');
       expect(notificationProvider()?.id).toBe('notification.console');
 
+      await writeFile(join(root, '.forge', 'config.toml'), '[providers]\nnotification = "filesystem"\n\n[notifications]\nchannel = "audit"\n');
+      expect(notificationProvider()?.id).toBe('notification.filesystem');
+
       await writeFile(join(root, '.forge', 'config.toml'), '[providers]\nnotification = "pager"\n');
       expect(() => notificationProvider()).toThrow("Unknown notification provider 'pager'");
 
