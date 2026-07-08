@@ -357,7 +357,7 @@ export class ForgeRuntime {
     }
     const result = await this.changeSetProvider().accept({ run, message });
     await this.deps.runStore?.update(run.id, { acceptance: { acceptedAt: new Date().toISOString(), providerId: result.providerId, status: result.status, message: result.message } });
-    await this.deps.store.update(run.taskId, { status: 'done' });
+    if (result.status === 'accepted' || result.status === 'empty') await this.deps.store.update(run.taskId, { status: 'done' });
     return result;
   }
 

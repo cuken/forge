@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { simpleGit } from 'simple-git';
 import { ForgeRuntime } from '../src/core/forge.js';
 import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
 import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
@@ -11,6 +12,7 @@ import type { ValidationProvider } from '../src/core/validation.js';
 import { LeaseConflictError, type LeaseHandle, type LeaseProvider } from '../src/core/lease.js';
 import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
+import { GitWorktreeChangeSetProvider } from '../src/providers/workspace-git-worktree/changes.js';
 import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; repo=false; async isRepo(){return this.repo;} async init(){this.repo=true;} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
@@ -216,6 +218,36 @@ describe('Forge vertical slice', () => {
     const acceptedRun = await rt.showRun('reviewable');
     expect(acceptedRun.acceptance).toMatchObject({ providerId: 'change-set.memory', status: 'accepted', message: 'accepted file.txt' });
     expect(acceptedRun.validation?.results).toEqual([]);
+  });
+
+  it('reports a dirty target checkout as a blocked acceptance result', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-git-accept-'));
+    const git = simpleGit(root);
+    await git.init();
+    await git.addConfig('user.name', 'Forge Test');
+    await git.addConfig('user.email', 'forge@example.test');
+    await writeFile(join(root, 'README.md'), 'initial\n');
+    await git.add('.');
+    await git.commit('initial');
+
+    const worktreePath = join(root, '..', `forge-git-accept-worktree-${Date.now()}`);
+    const branch = 'forge/dirty-target-test';
+    await git.raw(['worktree', 'add', '-b', branch, worktreePath, 'HEAD']);
+    await writeFile(join(worktreePath, 'feature.txt'), 'from run\n');
+    await writeFile(join(root, 'local.txt'), 'uncommitted target change\n');
+
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new GitWorktreeChangeSetProvider(root) });
+    await rt.init('demo');
+    const task = await rt.createTask('dirty checkout acceptance');
+    await rt.deps.store.update(task.id, { status: 'reviewing' });
+    const run = await rt.deps.runStore!.start({ task, agentId: 'agent.memory' });
+    await rt.deps.runStore!.update(run.id, { status: 'succeeded', workspace: { id: task.id, path: worktreePath, branch }, exitCode: 0, finishedAt: new Date().toISOString() });
+
+    const result = await rt.acceptRun(run.id, 'accept dirty target test');
+
+    expect(result).toMatchObject({ status: 'blocked', message: 'Cannot accept change set: project checkout has uncommitted changes' });
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'reviewing' });
+    await expect(rt.showRun(run.id)).resolves.toMatchObject({ acceptance: { status: 'blocked', message: result.message } });
   });
 
   it('runs provider-neutral validation gates before accepting completed runs', async () => {

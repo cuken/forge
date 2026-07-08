@@ -70,7 +70,7 @@ export interface RunRecord {
   logPath: string;
   error?: string;
   validation?: { validatedAt: string; results: { id: string; status: 'pass' | 'fail'; message: string; detail?: string }[] };
-  acceptance?: { acceptedAt: string; providerId: string; status: 'accepted' | 'empty'; message: string; dryRun?: boolean };
+  acceptance?: { acceptedAt: string; providerId: string; status: 'accepted' | 'empty' | 'blocked'; message: string; dryRun?: boolean };
 }
 
 export interface RunStore extends ForgeProvider {

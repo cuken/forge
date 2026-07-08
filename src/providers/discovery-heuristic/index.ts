@@ -7,12 +7,12 @@ export class HeuristicTaskDiscoveryProvider implements ForgeProvider, TaskDiscov
 
   async discoverTask(input: { title: string; description?: string; complexity: Task['complexity'] }): Promise<TaskDiscoveryMetadata> {
     const text = `${input.title}\n${input.description ?? ''}`;
-    const scopes = this.scopesFor(text);
+    const scopes = this.scopesFor(input.title, text);
     return { providerId: this.id, discoveredAt: new Date().toISOString(), resourceScopes: scopes.length ? scopes : [{ kind: 'unknown', value: '*', confidence: 'low', reason: 'No resource-specific terms were recognized.' }] };
   }
 
-  private scopesFor(text: string): TaskResourceScope[] {
-    const lower = text.toLowerCase();
+  private scopesFor(title: string, text: string): TaskResourceScope[] {
+    const lower = title.toLowerCase();
     const scopes: TaskResourceScope[] = [];
     const add = (scope: TaskResourceScope) => {
       if (!scopes.some(existing => existing.kind === scope.kind && existing.value === scope.value)) scopes.push(scope);
@@ -23,8 +23,8 @@ export class HeuristicTaskDiscoveryProvider implements ForgeProvider, TaskDiscov
 
     if (/\b(provider|providers|capability|capabilities)\b/.test(lower)) add({ kind: 'provider', value: 'src/providers', confidence: 'medium', reason: 'Task mentions providers or capabilities.' });
     if (/\b(config|configuration|schema|toml|json)\b/.test(lower)) add({ kind: 'config', value: '.forge/config.json', confidence: 'medium', reason: 'Task mentions configuration or schema concerns.' });
-    if (/\b(doc|docs|readme|documentation)\b/.test(lower)) add({ kind: 'docs', value: 'docs', confidence: 'medium', reason: 'Task mentions documentation.' });
-    if (/\b(test|tests|vitest|coverage)\b/.test(lower)) add({ kind: 'tests', value: 'test', confidence: 'medium', reason: 'Task mentions tests or validation.' });
+    if (/\b(doc|docs|readme|documentation|document)\b/.test(lower)) add({ kind: 'docs', value: 'docs', confidence: 'medium', reason: 'Task title mentions documentation.' });
+    if (/\b(test|tests|vitest|coverage)\b/.test(lower)) add({ kind: 'tests', value: 'test', confidence: 'medium', reason: 'Task title mentions tests or validation.' });
     if (/\b(task|tasks|store|metadata|resource scope|resource scopes|discovery)\b/.test(lower)) add({ kind: 'path', value: 'src/core/types.ts', confidence: 'medium', reason: 'Task mentions task metadata, discovery, or resource scopes.' });
 
     return scopes;

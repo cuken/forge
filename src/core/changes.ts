@@ -13,7 +13,7 @@ export interface AcceptChangeSetResult {
   providerId: string;
   runId: string;
   taskId: string;
-  status: 'accepted' | 'empty';
+  status: 'accepted' | 'empty' | 'blocked';
   message: string;
 }
 
