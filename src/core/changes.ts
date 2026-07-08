@@ -13,7 +13,7 @@ export interface AcceptChangeSetResult {
   providerId: string;
   runId: string;
   taskId: string;
-  status: 'accepted' | 'empty' | 'blocked';
+  status: 'accepted' | 'empty' | 'blocked' | 'merge-conflict';
   message: string;
 }
 

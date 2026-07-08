@@ -415,6 +415,39 @@ describe('Forge vertical slice', () => {
     await expect(rt.showRun(run.id)).resolves.toMatchObject({ acceptance: { status: 'blocked', message: result.message } });
   });
 
+  it('reports merge conflicts as a typed acceptance result', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-git-conflict-'));
+    const git = simpleGit(root);
+    await git.init();
+    await git.addConfig('user.name', 'Forge Test');
+    await git.addConfig('user.email', 'forge@example.test');
+    await writeFile(join(root, 'README.md'), 'base\n');
+    await git.add('.');
+    await git.commit('initial');
+
+    const worktreePath = join(root, '..', `forge-git-conflict-worktree-${Date.now()}`);
+    const branch = 'forge/conflicting-run-test';
+    await git.raw(['worktree', 'add', '-b', branch, worktreePath, 'HEAD']);
+    await writeFile(join(worktreePath, 'README.md'), 'run branch edit\n');
+    await writeFile(join(root, 'README.md'), 'target branch edit\n');
+    await git.add('.');
+    await git.commit('target edit');
+
+    const forgeRoot = await mkdtemp(join(tmpdir(), 'forge-state-conflict-'));
+    const rt = new ForgeRuntime({ root: forgeRoot, store: new FileTaskStore(forgeRoot), runStore: new FileRunStore(forgeRoot), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new GitWorktreeChangeSetProvider(root) });
+    await rt.init('demo');
+    const task = await rt.createTask('conflicting acceptance');
+    await rt.deps.store.update(task.id, { status: 'reviewing' });
+    const run = await rt.deps.runStore!.start({ task, agentId: 'agent.memory' });
+    await rt.deps.runStore!.update(run.id, { status: 'succeeded', workspace: { id: task.id, path: worktreePath, branch }, exitCode: 0, finishedAt: new Date().toISOString() });
+
+    const result = await rt.acceptRun(run.id, 'accept conflicting run');
+
+    expect(result).toMatchObject({ status: 'merge-conflict', message: 'Cannot accept change set: merge conflict in README.md' });
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'reviewing' });
+    await expect(rt.showRun(run.id)).resolves.toMatchObject({ acceptance: { status: 'merge-conflict', message: result.message } });
+  });
+
   it('runs provider-neutral validation gates before accepting completed runs', async () => {
     const { rt, changeSet } = await makeRuntime(new MemoryValidation('fail'));
     await rt.init('demo');

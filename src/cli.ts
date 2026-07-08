@@ -323,7 +323,7 @@ run.command('validate <id>').description('Run validation gates for a succeeded r
 run.command('accept <id>').description('Accept the change set from a succeeded run and mark its task done').option('-m, --message <message>', 'accept/commit message').option('--dry-run', 'validate and show what would be accepted without changing state').action(async (id, opts) => {
   const result = await runtime().acceptRun(id, opts.message, { dryRun: opts.dryRun });
   console.log(`${opts.dryRun ? 'dry-run ' : ''}${result.status} ${result.runId}: ${result.message}`);
-  if (result.status === 'blocked') process.exitCode = 1;
+  if (result.status === 'blocked' || result.status === 'merge-conflict') process.exitCode = 1;
 });
 
 program.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
