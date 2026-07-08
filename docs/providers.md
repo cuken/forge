@@ -21,6 +21,7 @@ Defined in `src/core/types.ts`:
 - `WorkstreamPlannerProvider` — turn a natural-language goal into workstream items, optionally asking clarifying questions through a generic channel
 - `NotificationProvider` — receive provider-neutral run lifecycle notifications without coupling runtime orchestration to a delivery channel
 - `GateProvider` — publish pending human decisions to an external system of record and read provider-neutral decisions back
+- `LifecycleHookProvider` — receive provider-neutral lifecycle hook payloads for durable automation/audit side effects
 
 ## Current optional capabilities
 
@@ -36,8 +37,11 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `NotificationProvider` — receives best-effort run lifecycle events such as started, workspace-created, environment-prepared, deferred, succeeded, and failed
 - `ReleaseVcsProvider` — prepares provider-neutral release records for human merge/release review without hardcoded branch behavior
 - `GateProvider` — bridges Forge approval gates to external systems without exposing tracker-specific concepts to core
+- `LifecycleHookProvider` — receives provider-neutral lifecycle events (`run.accepted`, `task.succeeded`, `task.failed`, `sync.completed`) with run/task/workstream identifiers plus commit/sync context
 
 Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`. Provider-owned doctor checks should cover external/environmental prerequisites that the runtime cannot know about; for example, `change-set.git-worktree` verifies Git worktree metadata and `.git` pointer accessibility so `forge doctor` can flag container mounts that would make review/accept fail. Notification providers also declare channel-readiness checks so `forge doctor` can report whether the selected console stream or filesystem audit log is writable before run lifecycle events are emitted.
+
+Lifecycle hook payloads are defined in `src/core/lifecycle.ts` and intentionally avoid code-host/tracker-specific fields. Providers receive `identity` (`runId`, `taskId`, `taskTitle`, optional `workstreamItemId`), compact task/run snapshots, optional `commit` context from change-set acceptance, optional `sync` context from `forge sync`, and generic JSON metadata. Hook failures are best-effort side effects and must not alter core state transitions.
 
 ## Provider rules
 

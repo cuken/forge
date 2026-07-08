@@ -32,6 +32,7 @@ Pi keeps a small harness and makes behavior discoverable through project instruc
 - **Sync** — provider-declared reconciliation between local state and declared upstream systems.
 - **Change set** — provider-neutral summary and acceptance hook for changes produced by a completed run.
 - **Resource scope lease** — provider-neutral claim on discovered task scopes, acquired before execution and released after completion/failure.
+- **Lifecycle hook** — provider-neutral event payload emitted after key state transitions such as run acceptance, task success/failure, and sync completion.
 - **Build plan** — provider-generated translation from a natural-language request into task complexity, spec policy, and execution flow.
 
 ## Boundary rule
@@ -54,13 +55,13 @@ await git.push('upstream', 'main');
 
 - `forge init` initializes `.forge/` and Git.
 - `forge doctor` runs provider-declared environment checks.
-- `forge sync` runs provider-declared synchronization tasks.
+- `forge sync` runs provider-declared synchronization tasks and emits a provider-neutral `sync.completed` lifecycle hook with the sync input and results.
 - `forge build <request>` turns natural language into the opinionated task/spec/run flow through a build planner provider.
 - `forge task create` creates local tasks and optionally GitHub issues.
 - `forge task spec` writes a spec file and moves a task to approval.
 - `forge task approve` marks the spec approved.
-- `forge task run-ready` acquires provider-neutral leases for discovered resource scopes (waiting with backoff and deferring the task back to `ready` if a scope stays busy past the lease-wait deadline), creates worktrees, prepares an execution environment, invokes the configured agent, releases leases, and records durable run metadata/logs for history inspection. It can dispatch multiple ready tasks concurrently with `--parallel`, but each task still crosses only the generic lease, workspace, isolation, agent, and store provider contracts. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
-- `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime.
+- `forge task run-ready` acquires provider-neutral leases for discovered resource scopes (waiting with backoff and deferring the task back to `ready` if a scope stays busy past the lease-wait deadline), creates worktrees, prepares an execution environment, invokes the configured agent, releases leases, records durable run metadata/logs for history inspection, and emits `task.succeeded` or `task.failed` lifecycle hooks. It can dispatch multiple ready tasks concurrently with `--parallel`, but each task still crosses only the generic lease, workspace, isolation, agent, and store provider contracts. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
+- `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime. Successful acceptance records commit context and emits `run.accepted`.
 - `forge release create/list/show/status/prepare` manages first-class release records and asks a generic provider to prepare human merge review without assuming GitHub releases, branch names, automatic merges, or any specific deployment provider.
 
 ## Extension direction

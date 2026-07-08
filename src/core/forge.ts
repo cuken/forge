@@ -7,6 +7,7 @@ import { hasGate, type GateDecision, type GateDecisionKind, type GateProvider, t
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
 import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } from './lease.js';
+import { buildLifecyclePayload, hasLifecycleHooks, type LifecycleHookEvent, type LifecycleHookProvider } from './lifecycle.js';
 import { hasNotification, type NotificationProvider, type RunNotificationEvent } from './notification.js';
 import { hasReleaseVcs, type PrepareReleaseResult, type ReleaseVcsProvider, type ReleaseVcsRef } from './release-vcs.js';
 import { resolveTask } from './resolve.js';
@@ -18,7 +19,7 @@ import type { AgentProvider, ForgeConfig, ForgeProvider, Json, ReleaseRecord, Re
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; releaseStore?: ReleaseStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; spec?: SpecProvider & ForgeProvider; notification?: NotificationProvider & ForgeProvider; gate?: GateProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; releaseStore?: ReleaseStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; spec?: SpecProvider & ForgeProvider; notification?: NotificationProvider & ForgeProvider; lifecycle?: LifecycleHookProvider & ForgeProvider; gate?: GateProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -27,13 +28,13 @@ export class ForgeRuntime {
     await this.deps.store.init();
     await this.deps.runStore?.init();
     await this.deps.releaseStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id, gate: this.deps.gate?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id, lifecycle: this.deps.lifecycle?.id, gate: this.deps.gate?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.releaseStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner, this.deps.spec, this.deps.notification, this.deps.gate].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.releaseStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner, this.deps.spec, this.deps.notification, this.deps.lifecycle, this.deps.gate].filter(Boolean); }
 
   private gateProvider(): GateProvider {
     const provider = this.providers().find(provider => hasGate(provider));
@@ -163,7 +164,9 @@ export class ForgeRuntime {
     if (this.providers().some(provider => hasGate(provider))) {
       tasks.unshift({ id: 'gate.decisions', label: 'external gate decisions', run: syncInput => this.applyGateDecisions(syncInput) });
     }
-    return runSyncTasks(tasks, input);
+    const results = await runSyncTasks(tasks, input);
+    await this.lifecycleHook('sync.completed', { sync: { input, results } });
+    return results;
   }
 
   private async applyGateDecisions(input: SyncInput = {}): Promise<SyncResult> {
@@ -220,6 +223,17 @@ export class ForgeRuntime {
         await provider.notifyRun({ event, task: input.task, run: input.run, message: input.message, metadata: input.metadata });
       } catch {
         // Notifications are best-effort lifecycle side effects; provider failures must not alter run state.
+      }
+    }));
+  }
+
+  private async lifecycleHook(event: LifecycleHookEvent, input: Omit<Parameters<typeof buildLifecyclePayload>[0], 'event'>) {
+    const payload = buildLifecyclePayload({ ...input, event });
+    await Promise.all(this.providers().filter(provider => hasLifecycleHooks(provider)).map(async provider => {
+      try {
+        await provider.lifecycleHook(payload);
+      } catch {
+        // Lifecycle hooks are provider-owned side effects; provider failures must not alter core state.
       }
     }));
   }
@@ -576,8 +590,9 @@ export class ForgeRuntime {
       return { providerId: summary.providerId, runId: run.id, taskId: run.taskId, status: summary.status === 'empty' ? 'empty' : 'accepted', message: `dry run: would accept ${summary.files.length} file(s)${message ? ` with message '${message}'` : ''}` };
     }
     const result = await this.changeSetProvider().accept({ run, message });
-    await this.deps.runStore?.update(run.id, { acceptance: { acceptedAt: new Date().toISOString(), providerId: result.providerId, status: result.status, message: result.message } });
-    if (result.status === 'accepted' || result.status === 'empty') await this.deps.store.update(run.taskId, { status: 'done' });
+    const acceptedRun = await this.deps.runStore?.update(run.id, { acceptance: { acceptedAt: new Date().toISOString(), providerId: result.providerId, status: result.status, message: result.message } });
+    const updatedTask = (result.status === 'accepted' || result.status === 'empty') ? await this.deps.store.update(run.taskId, { status: 'done' }) : task;
+    await this.lifecycleHook('run.accepted', { task: updatedTask, run: acceptedRun ?? run, acceptance: result });
     return result;
   }
 
@@ -654,11 +669,13 @@ export class ForgeRuntime {
         await this.deps.store.update(task.id, { status });
         const completedRun = await this.deps.runStore?.update(run!.id, { status: result.exitCode === 0 ? 'succeeded' : 'failed', exitCode: result.exitCode, finishedAt: new Date().toISOString() });
         await this.notifyRun(result.exitCode === 0 ? 'run.succeeded' : 'run.failed', { task, run: completedRun ?? run, message: `agent exited ${result.exitCode}`, metadata: result.exitCode === 0 ? undefined : { failureReason: `agent exited ${result.exitCode}`, exitCode: result.exitCode } });
+        await this.lifecycleHook(result.exitCode === 0 ? 'task.succeeded' : 'task.failed', { task: { ...task, status }, run: completedRun ?? run, metadata: result.exitCode === 0 ? undefined : { failureReason: `agent exited ${result.exitCode}`, exitCode: result.exitCode } });
         return { task: task.id, run: run?.id, workspace: ws, environment: env, result };
       } catch (error) {
         await this.deps.store.update(task.id, { status: 'failed' });
         const failedRun = await this.deps.runStore?.update(run!.id, { status: 'failed', error: String(error), finishedAt: new Date().toISOString() });
         await this.notifyRun('run.failed', { task, run: failedRun ?? run, message: String(error), metadata: { failureReason: String(error) } });
+        await this.lifecycleHook('task.failed', { task: { ...task, status: 'failed' }, run: failedRun ?? run, metadata: { failureReason: String(error) } });
         return { task: task.id, run: run?.id, error: String(error) };
       } finally {
         if (lease) {
