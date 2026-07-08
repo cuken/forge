@@ -244,16 +244,32 @@ export class ForgeRuntime {
 
   private async completeLinkedWorkstream(input: { task: Task; run: RunRecord; acceptance: AcceptChangeSetResult }) {
     if (input.acceptance.status !== 'accepted' && input.acceptance.status !== 'empty') return;
-    const itemId = this.workstreamItemIdFromTask(input.task);
-    if (!itemId) return;
-    await Promise.all(this.providers().filter(provider => hasWorkstreamCompletion(provider)).map(provider => provider.completeWorkstreamItem({
-      itemId,
-      status: 'completed',
-      acceptedRunId: input.run.id,
-      comment: input.acceptance.message,
-      commit: { providerId: input.acceptance.providerId, status: input.acceptance.status, message: input.acceptance.message },
-      metadata: { taskId: input.task.id, taskTitle: input.task.title },
-    })));
+    const item = await this.linkedWorkstreamItem(input.task);
+    if (!item) return;
+    const failures: string[] = [];
+    await Promise.all(this.providers().filter(provider => hasWorkstreamCompletion(provider)).map(async provider => {
+      try {
+        await provider.completeWorkstreamItem({
+          itemId: item.id,
+          status: 'completed',
+          acceptedRunId: input.run.id,
+          comment: input.acceptance.message,
+          commit: { providerId: input.acceptance.providerId, status: input.acceptance.status, message: input.acceptance.message },
+          metadata: { taskId: input.task.id, taskTitle: input.task.title },
+        });
+      } catch (error) {
+        failures.push(`${provider.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }));
+    if (failures.length) throw new Error(`Workstream completion update failed after run ${input.run.id} was accepted. Resolve provider failure(s) and retry or inspect the linked workstream item ${item.id}: ${failures.join('; ')}`);
+  }
+
+  private async linkedWorkstreamItem(task: Task): Promise<WorkstreamItem | undefined> {
+    const itemId = this.workstreamItemIdFromTask(task);
+    const workstream = this.providers().find(provider => hasWorkstream(provider));
+    if (!workstream || !hasWorkstream(workstream)) return itemId ? { id: itemId, title: itemId, dependencies: [], complexity: task.complexity, status: 'queued', taskId: task.id } : undefined;
+    const items = await workstream.list();
+    return items.find(item => item.taskId === task.id) ?? (itemId ? items.find(item => item.id === itemId) : undefined);
   }
 
   private workstreamItemIdFromTask(task: Task): string | undefined {

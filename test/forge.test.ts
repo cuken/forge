@@ -19,6 +19,7 @@ import { LeaseConflictError, type LeaseHandle, type LeaseProvider } from '../src
 import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
 import { GitWorktreeChangeSetProvider } from '../src/providers/workspace-git-worktree/changes.js';
+import type { WorkstreamCompletionProvider, WorkstreamCompletionUpdate } from '../src/core/workstream.js';
 import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; repo=false; async isRepo(){return this.repo;} async init(){this.repo=true;} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
@@ -41,6 +42,7 @@ class MemorySpec implements SpecProvider, ForgeProvider { id='spec.memory'; kind
 class MemoryNotification implements NotificationProvider, ForgeProvider { id='notification.memory'; kind='notification'; events:RunNotificationInput[]=[]; async notifyRun(input:RunNotificationInput){ this.events.push(input); } }
 class BrokenNotification implements NotificationProvider, ForgeProvider { id='notification.broken'; kind='notification'; async notifyRun(){ throw new Error('notification backend unreachable'); } }
 class MemoryLifecycle implements LifecycleHookProvider, ForgeProvider { id='lifecycle.memory'; kind='lifecycle'; events:LifecycleHookPayload[]=[]; constructor(private error?: Error){} async lifecycleHook(input:LifecycleHookPayload){ this.events.push(input); if (this.error) throw this.error; } }
+class MemoryWorkstreamCompletion implements WorkstreamCompletionProvider { id='workstream-completion.memory'; kind='workstream-completion' as const; updates:WorkstreamCompletionUpdate[]=[]; constructor(private error?: Error){} async completeWorkstreamItem(input:WorkstreamCompletionUpdate){ this.updates.push(input); if (this.error) throw this.error; } }
 class DecisionGate implements GateProvider { id='gate.memory'; kind='gate' as const; constructor(private decisions: Record<string, GateDecision | null>){} async publishDecision(){ throw new Error('not used'); } async readDecision(input:{gateId:string}){ return this.decisions[input.gateId] ?? null; } }
 
 async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
@@ -545,6 +547,60 @@ describe('Forge vertical slice', () => {
 
     expect(changeSet.accepted).toEqual([runId]);
     expect(lifecycle.events.filter(event => event.event === 'run.accepted')).toHaveLength(1);
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'done' });
+    await expect(rt.showRun(runId)).resolves.toMatchObject({ acceptance: { status: 'accepted' } });
+  });
+
+  it('completes the linked workstream item when a tracker-backed run is accepted', async () => {
+    const { rt } = await makeRuntime(new MemoryValidation('pass'));
+    const completion = new MemoryWorkstreamCompletion();
+    rt.deps.workstreamCompletion = completion;
+    await rt.init('demo');
+    await rt.deps.workstream!.import({ items: [{ id: 'linked-item', title: 'linked workstream task', complexity: 'small' }], replace: true });
+    const [task] = await rt.enqueueWorkstream(['linked-item']);
+    const results = await rt.runTask(task.id);
+    const runId = results[0].run!;
+
+    await expect(rt.acceptRun(runId, 'accept linked work')).resolves.toMatchObject({ status: 'accepted' });
+
+    expect(completion.updates).toHaveLength(1);
+    expect(completion.updates[0]).toMatchObject({
+      itemId: 'linked-item',
+      status: 'completed',
+      acceptedRunId: runId,
+      comment: 'accepted file.txt',
+      commit: { providerId: 'change-set.memory', status: 'accepted', message: 'accepted file.txt' },
+      metadata: { taskId: task.id, taskTitle: task.title },
+    });
+  });
+
+  it('does not update workstream completion for unlinked accepted runs', async () => {
+    const { rt } = await makeRuntime(new MemoryValidation('pass'));
+    const completion = new MemoryWorkstreamCompletion();
+    rt.deps.workstreamCompletion = completion;
+    await rt.init('demo');
+    const task = await rt.createTask('unlinked acceptance task');
+    const results = await rt.runTask(task.id);
+
+    await expect(rt.acceptRun(results[0].run!, 'accept unlinked work')).resolves.toMatchObject({ status: 'accepted' });
+
+    expect(completion.updates).toEqual([]);
+  });
+
+  it('surfaces workstream completion failures after persisting accepted state', async () => {
+    const { rt, changeSet } = await makeRuntime(new MemoryValidation('pass'));
+    const completion = new MemoryWorkstreamCompletion(new Error('tracker update rejected'));
+    rt.deps.workstreamCompletion = completion;
+    await rt.init('demo');
+    await rt.deps.workstream!.import({ items: [{ id: 'failing-item', title: 'failing workstream task', complexity: 'small' }], replace: true });
+    const [task] = await rt.enqueueWorkstream(['failing-item']);
+    const results = await rt.runTask(task.id);
+    const runId = results[0].run!;
+
+    await expect(rt.acceptRun(runId, 'accept with broken tracker')).rejects.toThrow('Workstream completion update failed after run');
+
+    expect(changeSet.accepted).toEqual([runId]);
+    expect(completion.updates).toHaveLength(1);
     await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'done' });
     await expect(rt.showRun(runId)).resolves.toMatchObject({ acceptance: { status: 'accepted' } });
   });
