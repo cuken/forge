@@ -94,7 +94,15 @@ export class GitWorktreeChangeSetProvider implements ChangeSetProvider, DoctorPr
     await worktreeGit.add('.');
     const commit = await worktreeGit.commit(input.message ?? `Accept Forge run ${input.run.id}: ${input.run.taskTitle}`);
 
-    await rootGit.merge([ws.branch]);
+    try {
+      await rootGit.merge([ws.branch]);
+    } catch (error) {
+      const conflicted = (await rootGit.status()).conflicted;
+      if (conflicted.length) {
+        return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'merge-conflict' as const, message: `Cannot accept change set: merge conflict in ${conflicted.join(', ')}` };
+      }
+      throw error;
+    }
     return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: `Accepted ${commit.commit} from ${ws.branch}` };
   }
 }
