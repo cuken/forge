@@ -11,6 +11,7 @@ import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
 import type { NotificationProvider, RunNotificationInput } from '../src/core/notification.js';
+import type { LifecycleHookPayload, LifecycleHookProvider } from '../src/core/lifecycle.js';
 import type { SpecProvider } from '../src/core/spec.js';
 import type { GateDecision, GateProvider } from '../src/core/gate.js';
 import type { ReleaseVcsProvider, ReleaseVcsRef, ReleaseVcsTarget } from '../src/core/release-vcs.js';
@@ -39,6 +40,7 @@ class MemoryLease implements LeaseProvider { id='lease.memory'; kind='lease' as 
 class MemorySpec implements SpecProvider, ForgeProvider { id='spec.memory'; kind='spec' as const; async generateSpec(input:{task:Task}){ return { providerId: this.id, body: `# Generated spec\n\n${input.task.title}` }; } }
 class MemoryNotification implements NotificationProvider, ForgeProvider { id='notification.memory'; kind='notification'; events:RunNotificationInput[]=[]; async notifyRun(input:RunNotificationInput){ this.events.push(input); } }
 class BrokenNotification implements NotificationProvider, ForgeProvider { id='notification.broken'; kind='notification'; async notifyRun(){ throw new Error('notification backend unreachable'); } }
+class MemoryLifecycle implements LifecycleHookProvider, ForgeProvider { id='lifecycle.memory'; kind='lifecycle'; events:LifecycleHookPayload[]=[]; async lifecycleHook(input:LifecycleHookPayload){ this.events.push(input); } }
 class DecisionGate implements GateProvider { id='gate.memory'; kind='gate' as const; constructor(private decisions: Record<string, GateDecision | null>){} async publishDecision(){ throw new Error('not used'); } async readDecision(input:{gateId:string}){ return this.decisions[input.gateId] ?? null; } }
 
 async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
@@ -67,6 +69,13 @@ async function makeRuntimeWithNotification(notification: NotificationProvider & 
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
   const agent = new MemoryAgent();
   const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet: new MemoryChangeSet(), notification });
+  return { rt, agent };
+}
+
+async function makeRuntimeWithLifecycle(lifecycle: LifecycleHookProvider & ForgeProvider) {
+  const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+  const agent = new MemoryAgent();
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet: new MemoryChangeSet(), lifecycle });
   return { rt, agent };
 }
 
@@ -415,6 +424,44 @@ describe('Forge vertical slice', () => {
 
     expect(results[0]).toMatchObject({ task: task.id, result: { exitCode: 0 } });
     await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'reviewing' });
+  });
+
+  it('emits provider-neutral lifecycle hooks when isolated agent tasks succeed', async () => {
+    const lifecycle = new MemoryLifecycle();
+    const { rt } = await makeRuntimeWithLifecycle(lifecycle);
+    await rt.init('demo');
+    const task = await rt.createTask('lifecycle success task');
+
+    const results = await rt.runTask(task.id);
+
+    expect(results[0]).toMatchObject({ task: task.id, result: { exitCode: 0 } });
+    expect(lifecycle.events).toHaveLength(1);
+    expect(lifecycle.events[0]).toMatchObject({
+      event: 'task.succeeded',
+      identity: { taskId: task.id, runId: results[0].run, taskTitle: 'lifecycle success task' },
+      task: { id: task.id, title: 'lifecycle success task', status: 'reviewing' },
+      run: { id: results[0].run, status: 'succeeded', exitCode: 0 },
+    });
+  });
+
+  it('emits provider-neutral lifecycle hooks with failure metadata when isolated agent tasks fail', async () => {
+    const lifecycle = new MemoryLifecycle();
+    const { rt, agent } = await makeRuntimeWithLifecycle(lifecycle);
+    await rt.init('demo');
+    agent.run = async () => ({ exitCode: 42, output: 'not ok' });
+    const task = await rt.createTask('lifecycle failed task');
+
+    const results = await rt.runTask(task.id);
+
+    expect(results[0]).toMatchObject({ task: task.id, result: { exitCode: 42 } });
+    expect(lifecycle.events).toHaveLength(1);
+    expect(lifecycle.events[0]).toMatchObject({
+      event: 'task.failed',
+      identity: { taskId: task.id, runId: results[0].run, taskTitle: 'lifecycle failed task' },
+      task: { id: task.id, title: 'lifecycle failed task', status: 'failed' },
+      run: { id: results[0].run, status: 'failed', exitCode: 42 },
+      metadata: { failureReason: 'agent exited 42', exitCode: 42 },
+    });
   });
 
   it('persists run records and captured logs', async () => {

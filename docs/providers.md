@@ -43,6 +43,8 @@ Optional capabilities must be discovered structurally with guards like `hasDocto
 
 Lifecycle hook payloads are defined in `src/core/lifecycle.ts` and intentionally avoid code-host/tracker-specific fields. Providers receive `identity` (`runId`, `taskId`, `taskTitle`, optional `workstreamItemId`), compact task/run snapshots, optional `commit` context from change-set acceptance, optional `sync` context from `forge sync`, and generic JSON metadata. Hook failures are best-effort side effects and must not alter core state transitions.
 
+`task.succeeded` and `task.failed` are emitted when an isolated agent task finishes, so providers can observe completion outcomes without core orchestration directly updating trackers or code hosts. A succeeded task is still only in `reviewing`; `run.accepted` remains the canonical close-the-loop event for marking external work complete unless a provider intentionally chooses to react earlier to task completion.
+
 ## Provider rules
 
 1. Provider IDs should be stable and namespaced, e.g. `vcs.git`, `agent.pi`, `scm.github`.
