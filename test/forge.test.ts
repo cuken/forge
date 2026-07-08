@@ -234,6 +234,52 @@ describe('Forge vertical slice', () => {
     expect(success.run?.finishedAt).toEqual(expect.any(String));
   });
 
+  it('sends configured notifications with provider-neutral failure metadata when a run fails', async () => {
+    const notification = new MemoryNotification();
+    const { rt, agent } = await makeRuntimeWithNotification(notification);
+    await rt.init('demo');
+    agent.run = async input => {
+      agent.runs.push(input.task.id);
+      input.onOutput?.('failure output\n');
+      return { exitCode: 42, output: 'not ok' };
+    };
+    const task = await rt.createTask('notified failing task');
+
+    const results = await rt.runTask(task.id);
+
+    expect(results[0]).toMatchObject({ task: task.id, result: { exitCode: 42 } });
+    const failed = notification.events.at(-1)!;
+    expect(failed).toMatchObject({
+      event: 'run.failed',
+      task: { id: task.id, title: 'notified failing task' },
+      run: { taskId: task.id, status: 'failed', exitCode: 42 },
+      message: 'agent exited 42',
+      metadata: { failureReason: 'agent exited 42', exitCode: 42 },
+    });
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'failed' });
+  });
+
+  it('sends configured notifications with provider-neutral failure metadata when a run errors', async () => {
+    const notification = new MemoryNotification();
+    const { rt, agent } = await makeRuntimeWithNotification(notification);
+    await rt.init('demo');
+    agent.run = async () => { throw new Error('agent backend exploded'); };
+    const task = await rt.createTask('notified error task');
+
+    const results = await rt.runTask(task.id);
+
+    expect(results[0]).toMatchObject({ task: task.id, error: 'Error: agent backend exploded' });
+    const failed = notification.events.at(-1)!;
+    expect(failed).toMatchObject({
+      event: 'run.failed',
+      task: { id: task.id, title: 'notified error task' },
+      run: { taskId: task.id, status: 'failed', error: 'Error: agent backend exploded' },
+      message: 'Error: agent backend exploded',
+      metadata: { failureReason: 'Error: agent backend exploded' },
+    });
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'failed' });
+  });
+
   it('ignores providers without notification support and best-effort notification failures', async () => {
     const { rt } = await makeRuntimeWithNotification(new BrokenNotification());
     await rt.init('demo');

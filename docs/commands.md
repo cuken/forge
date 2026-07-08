@@ -31,7 +31,7 @@ notification = "console"
 channel = "stderr" # or "stdout"
 ```
 
-Unknown notification providers or channels fail during CLI wiring before commands start work.
+Unknown notification providers or channels fail during CLI wiring before commands start work. Run failure notifications are sent for both non-zero agent exits and execution errors; providers receive a neutral `metadata.failureReason` value and, for non-zero exits, `metadata.exitCode`.
 
 - `vcs.git`: git binary, repository, worktree support
 - selected isolation provider via `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml`

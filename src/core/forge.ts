@@ -11,7 +11,7 @@ import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
 import { hasWorkstream, hasWorkstreamPlanner, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
-import type { AgentProvider, ForgeConfig, ForgeProvider, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
+import type { AgentProvider, ForgeConfig, ForgeProvider, Json, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
@@ -60,10 +60,10 @@ export class ForgeRuntime {
     return provider && hasLease(provider) ? provider : undefined;
   }
 
-  private async notifyRun(event: RunNotificationEvent, input: { task: Task; run?: RunRecord; message: string }) {
+  private async notifyRun(event: RunNotificationEvent, input: { task: Task; run?: RunRecord; message: string; metadata?: { [key: string]: Json } }) {
     await Promise.all(this.providers().filter(provider => hasNotification(provider)).map(async provider => {
       try {
-        await provider.notifyRun({ event, task: input.task, run: input.run, message: input.message });
+        await provider.notifyRun({ event, task: input.task, run: input.run, message: input.message, metadata: input.metadata });
       } catch {
         // Notifications are best-effort lifecycle side effects; provider failures must not alter run state.
       }
@@ -442,12 +442,12 @@ export class ForgeRuntime {
         const status = result.exitCode === 0 ? 'reviewing' : 'failed';
         await this.deps.store.update(task.id, { status });
         const completedRun = await this.deps.runStore?.update(run!.id, { status: result.exitCode === 0 ? 'succeeded' : 'failed', exitCode: result.exitCode, finishedAt: new Date().toISOString() });
-        await this.notifyRun(result.exitCode === 0 ? 'run.succeeded' : 'run.failed', { task, run: completedRun ?? run, message: `agent exited ${result.exitCode}` });
+        await this.notifyRun(result.exitCode === 0 ? 'run.succeeded' : 'run.failed', { task, run: completedRun ?? run, message: `agent exited ${result.exitCode}`, metadata: result.exitCode === 0 ? undefined : { failureReason: `agent exited ${result.exitCode}`, exitCode: result.exitCode } });
         return { task: task.id, run: run?.id, workspace: ws, environment: env, result };
       } catch (error) {
         await this.deps.store.update(task.id, { status: 'failed' });
         const failedRun = await this.deps.runStore?.update(run!.id, { status: 'failed', error: String(error), finishedAt: new Date().toISOString() });
-        await this.notifyRun('run.failed', { task, run: failedRun ?? run, message: String(error) });
+        await this.notifyRun('run.failed', { task, run: failedRun ?? run, message: String(error), metadata: { failureReason: String(error) } });
         return { task: task.id, run: run?.id, error: String(error) };
       } finally {
         if (lease) {
