@@ -103,6 +103,7 @@ export class GitWorktreeChangeSetProvider implements ChangeSetProvider, DoctorPr
       }
       throw error;
     }
-    return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: `Accepted ${commit.commit} from ${ws.branch}` };
+    const head = await rootGit.revparse(['HEAD']);
+    return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: `Accepted ${commit.commit} from ${ws.branch}`, commit: { providerId: this.id, id: head.trim(), sha: head.trim(), branch: ws.branch, message: input.message } };
   }
 }

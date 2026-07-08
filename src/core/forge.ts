@@ -247,8 +247,9 @@ export class ForgeRuntime {
       status: 'completed',
       acceptedRunId: input.run.id,
       comment: input.acceptance.message,
-      commit: { providerId: input.acceptance.providerId, status: input.acceptance.status, message: input.acceptance.message },
-      metadata: { taskId: input.task.id, taskTitle: input.task.title },
+      commit: input.acceptance.commit ?? { providerId: input.acceptance.providerId, status: input.acceptance.status, message: input.acceptance.message },
+      sync: input.acceptance.sync,
+      metadata: { taskId: input.task.id, taskTitle: input.task.title }, 
     })));
   }
 

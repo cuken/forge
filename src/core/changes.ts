@@ -9,12 +9,24 @@ export interface ChangeSetSummary {
   summary: string;
 }
 
+export interface CompletionReference {
+  providerId?: string;
+  id?: string;
+  sha?: string;
+  branch?: string;
+  url?: string;
+  message?: string;
+  status?: string;
+}
+
 export interface AcceptChangeSetResult {
   providerId: string;
   runId: string;
   taskId: string;
   status: 'accepted' | 'empty' | 'blocked' | 'merge-conflict';
   message: string;
+  commit?: CompletionReference;
+  sync?: CompletionReference;
 }
 
 export interface ChangeSetProvider extends ForgeProvider {
