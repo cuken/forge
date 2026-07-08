@@ -183,6 +183,29 @@ forge build update forge so that it honors toml files in the config instead of j
 
 This should draft a spec and print the approval command. Future planners may use context maps, memory, survey agents, or LLMs to estimate complexity.
 
+## `forge release create <version>`
+
+Creates a first-class release record in the configured `ReleaseStore` (`.forge/releases/` for the filesystem store). Release records are provider-neutral: `target.kind`, `target.id`, optional `target.name`, and target metadata identify what is being released without assuming GitHub, branches, tags, environments, or package registries.
+
+Options:
+
+- `--target-kind <kind>` — target category, such as `package`, `service`, or `environment`
+- `--target-id <id>` — stable target identifier
+- `--target-name <name>` — optional display name
+- `--status <status>` — initial lifecycle status (default: `planned`)
+- `--notes <notes>` — release notes or planning notes
+
+Release lifecycle vocabulary:
+
+- `planned` — release intent exists but preparation has not started
+- `preparing` — release work is in progress
+- `ready` — release has passed local gates and is ready for external delivery
+- `released` — delivery completed
+- `failed` — release attempt failed
+- `canceled` — release intent was abandoned
+
+`forge release status <id> <status>` updates the status and records status-specific timestamps for `preparing`, `released`, `failed`, and `canceled`. `forge release list` supports `--status` and `--target-kind`; `forge release show <id>` prints the persisted JSON record.
+
 ## `forge task create <title>`
 
 Creates a task in the configured `TaskStore`. If a `TaskDiscoveryProvider` is configured, Forge also stores task discovery metadata with likely resource scopes.

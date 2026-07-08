@@ -7,6 +7,7 @@ Providers are Forge's extension mechanism. A provider is a class/object with an 
 Defined in `src/core/types.ts`:
 
 - `TaskStore` — persist tasks
+- `ReleaseStore` — persist provider-neutral release records with version, lifecycle status, target metadata, and timestamps
 - `VcsProvider` — version-control basics
 - `WorkspaceProvider` — create isolated workspaces
 - `IsolationProvider` — prepare the execution environment/safety boundary for agent processes
@@ -142,6 +143,14 @@ Future implementations can back the same interface with Jira or any tracker that
 
 Built-in implementation: `workstream-planner.pi`, which runs the configured pi command twice — once to elicit at most four clarifying questions as JSON, once (with the answers) to produce the plan JSON. It parses JSON leniently from chatty agent output and normalizes complexity to the standard `trivial|small|medium|large` gates. Future implementations can wrap other agents, planning services, or fully deterministic templates.
 
+## Release records
+
+`ReleaseStore` persists first-class release domain records independently of task runs, GitHub releases, branch names, or deployment backends. A `ReleaseRecord` has a stable `id`, semantic or project-defined `version`, lifecycle `status` (`planned`, `preparing`, `ready`, `released`, `failed`, `canceled`), a provider-neutral `target` (`kind`, `id`, optional `name` and metadata), timestamps, notes, and arbitrary metadata.
+
+`ForgeRuntime.createRelease()`, `getRelease()`, `listReleases()`, and `updateRelease()` expose the generic store pattern. Providers should keep target identifiers stable and let future delivery/deployment capabilities interpret release records instead of encoding external-system behavior in core.
+
+The built-in `store.filesystem.releases` provider stores one JSON file per release in `.forge/releases/` and supports listing by status or target kind.
+
 ## Run lifecycle notifications
 
 `NotificationProvider` lets providers send lifecycle updates about Forge runs without the core knowing about chat, email, webhooks, terminals, or any other concrete channel. The contract is `notifyRun({ event, task, run?, message })`, where `event` is one of `run.started`, `run.workspace-created`, `run.environment-prepared`, `run.deferred`, `run.succeeded`, or `run.failed`.
@@ -164,7 +173,7 @@ Future implementations can deliver the same neutral events through any channel o
 - `src/providers/planner-pi` implements `WorkstreamPlannerProvider` by interviewing through pi and emitting dependency-ordered workstream drafts.
 - `src/providers/spec-pi` implements `SpecProvider` by asking pi to draft Markdown specs for gated tasks.
 - `src/providers/notification-console` implements `NotificationProvider` by writing run lifecycle notifications to the configured console stream.
-- `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
+- `src/providers/store-filesystem` stores task JSON under `.forge/tasks` and release JSON under `.forge/releases`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task and provides `change-set.git-worktree` for reviewing changed files and accepting run branches back into the project checkout. New configs record this provider as `providers.changeSet`.
 - `src/providers/isolation-host` runs agents directly on the host worktree and warns that it is not a sandbox.

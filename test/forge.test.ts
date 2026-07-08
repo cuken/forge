@@ -6,6 +6,7 @@ import { simpleGit } from 'simple-git';
 import { ForgeRuntime } from '../src/core/forge.js';
 import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
 import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
+import { FileReleaseStore } from '../src/providers/store-filesystem/releases.js';
 import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
@@ -32,7 +33,7 @@ async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
   const agent = new MemoryAgent();
   const changeSet = new MemoryChangeSet();
-  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet, validation, workstream: new FileWorkstreamProvider(root) });
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), releaseStore: new FileReleaseStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet, validation, workstream: new FileWorkstreamProvider(root) });
   return { rt, agent, changeSet, root };
 }
 
@@ -90,6 +91,21 @@ describe('Forge vertical slice', () => {
     expect(lease.released).toEqual([task.id]);
     const log = await rt.deps.runStore!.readLog(results[0].run!);
     expect(log).toContain('lease lease-');
+  });
+
+  it('creates, loads, and lists provider-neutral release records', async () => {
+    const { rt, root } = await makeRuntime();
+    await rt.init('demo');
+
+    const release = await rt.createRelease({ version: '1.2.3', target: { kind: 'package', id: 'forge-cli', name: 'Forge CLI', metadata: { runtime: 'node' } }, scheduledAt: '2026-02-01T00:00:00.000Z', notes: 'first-class release state' });
+    const ready = await rt.updateRelease(release.id, { status: 'ready' });
+
+    expect(release).toMatchObject({ id: '1-2-3-package-forge-cli', version: '1.2.3', status: 'planned', target: { kind: 'package', id: 'forge-cli', name: 'Forge CLI' } });
+    expect(ready.updatedAt).not.toBe(release.updatedAt);
+    await expect(rt.getRelease(release.id)).resolves.toMatchObject({ version: '1.2.3', status: 'ready', target: { metadata: { runtime: 'node' } } });
+    await expect(rt.listReleases({ status: 'ready' })).resolves.toHaveLength(1);
+    await expect(rt.listReleases({ targetKind: 'environment' })).resolves.toEqual([]);
+    await expect(readFile(join(root, '.forge', 'releases', `${release.id}.json`), 'utf8')).resolves.toContain('first-class release state');
   });
 
   it('creates small tasks as ready and medium tasks behind spec gate', async () => {

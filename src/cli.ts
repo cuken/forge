@@ -6,6 +6,7 @@ import { basename } from 'node:path';
 import { ForgeRuntime } from './core/forge.js';
 import { FileTaskStore } from './providers/store-filesystem/index.js';
 import { FileRunStore } from './providers/store-filesystem/runs.js';
+import { FileReleaseStore } from './providers/store-filesystem/releases.js';
 import { GitVcsProvider } from './providers/vcs-git/index.js';
 import { GitWorktreeProvider } from './providers/workspace-git-worktree/index.js';
 import { GitWorktreeChangeSetProvider } from './providers/workspace-git-worktree/changes.js';
@@ -108,7 +109,7 @@ function runtime() {
     : requestedWorkstream === 'github' || requestedWorkstream === 'workstream.github'
       ? new GitHubIssuesWorkstreamProvider(config?.github ?? {})
       : new FileWorkstreamProvider();
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), spec: requestedSpec ? new PiSpecProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) : undefined, notification: notificationProvider() });
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), releaseStore: new FileReleaseStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), spec: requestedSpec ? new PiSpecProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) : undefined, notification: notificationProvider() });
 }
 
 const program = new Command();
@@ -235,6 +236,26 @@ program.command('build <request...>').alias('b').description('Plan a natural-lan
   console.log(result.plan.reason);
   if (result.task.spec && !result.task.spec.approved) console.log(`spec=${result.task.spec.path} approve with: forge task approve ${result.task.id}`);
   if (result.runResults) console.log(JSON.stringify(result.runResults, null, 2));
+});
+
+const release = program.command('release').description('Manage provider-neutral release records');
+release.command('create <version>').requiredOption('--target-kind <kind>', 'provider-neutral target kind, such as package or environment').requiredOption('--target-id <id>', 'provider-neutral target identifier').option('--target-name <name>', 'human-readable target name').option('--status <status>', 'planned|preparing|ready|released|failed|canceled', 'planned').option('--notes <notes>').action(async (version, opts) => {
+  const record = await runtime().createRelease({ version, status: opts.status, target: { kind: opts.targetKind, id: opts.targetId, name: opts.targetName }, notes: opts.notes });
+  console.log(`${record.id}\t${record.status}\t${record.version}\t${record.target.kind}:${record.target.id}`);
+});
+release.command('list').option('--status <status>', 'filter by release lifecycle status').option('--target-kind <kind>', 'filter by target kind').action(async opts => {
+  for (const record of await runtime().listReleases({ status: opts.status, targetKind: opts.targetKind })) console.log(`${record.id}\t${record.status}\t${record.version}\t${record.target.kind}:${record.target.id}\t${record.createdAt}`);
+});
+release.command('show <id>').action(async id => {
+  const record = await runtime().getRelease(id);
+  if (!record) throw new Error(`Release not found: ${id}`);
+  console.log(JSON.stringify(record, null, 2));
+});
+release.command('status <id> <status>').description('Update a release lifecycle status').action(async (id, status) => {
+  const now = new Date().toISOString();
+  const timestamps: Record<string, string> = status === 'preparing' ? { startedAt: now } : status === 'released' ? { releasedAt: now } : status === 'failed' ? { failedAt: now } : status === 'canceled' ? { canceledAt: now } : {};
+  const record = await runtime().updateRelease(id, { status, ...timestamps });
+  console.log(`${record.id}\t${record.status}\t${record.updatedAt}`);
 });
 
 const task = program.command('task');

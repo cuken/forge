@@ -23,6 +23,7 @@ Pi keeps a small harness and makes behavior discoverable through project instruc
 - **Task** — desired work with status, complexity, optional issue, optional spec, and context refs.
 - **Spec** — human or machine-approved design/evidence gate before execution.
 - **Run** — one durable execution attempt by an agent, with metadata in `.forge/runs/` and captured output in `.forge/logs/`.
+- **Release** — provider-neutral record for a versioned delivery target, with lifecycle status, target metadata, and timestamps in `.forge/releases/`.
 - **Workspace** — isolated filesystem/repo location for a task.
 - **Execution environment** — provider-prepared safety boundary where the agent process runs. This may be the host worktree, a container, a remote VM, or another sandbox.
 - **Provider** — implementation of an external capability.
@@ -60,6 +61,7 @@ await git.push('upstream', 'main');
 - `forge task approve` marks the spec approved.
 - `forge task run-ready` acquires provider-neutral leases for discovered resource scopes (waiting with backoff and deferring the task back to `ready` if a scope stays busy past the lease-wait deadline), creates worktrees, prepares an execution environment, invokes the configured agent, releases leases, and records durable run metadata/logs for history inspection. It can dispatch multiple ready tasks concurrently with `--parallel`, but each task still crosses only the generic lease, workspace, isolation, agent, and store provider contracts. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
 - `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime.
+- `forge release create/list/show/status` manages first-class release records without assuming GitHub releases, branch names, or any specific deployment provider.
 
 ## Extension direction
 

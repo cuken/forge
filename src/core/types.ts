@@ -27,6 +27,7 @@ export interface ForgeConfig {
   project: { name: string };
   providers: {
     store: string;
+    releaseStore?: string;
     vcs: string;
     workspace: string;
     isolation?: string;
@@ -85,6 +86,40 @@ export interface RunStore extends ForgeProvider {
   get(id: string): Promise<RunRecord | null>;
   list(input?: { taskId?: string }): Promise<RunRecord[]>;
   readLog(id: string): Promise<string>;
+}
+
+export type ReleaseStatus = 'planned' | 'preparing' | 'ready' | 'released' | 'failed' | 'canceled';
+
+export interface ReleaseTarget {
+  kind: string;
+  id: string;
+  name?: string;
+  metadata?: Record<string, Json>;
+}
+
+export interface ReleaseRecord {
+  id: string;
+  version: string;
+  status: ReleaseStatus;
+  target: ReleaseTarget;
+  createdAt: string;
+  updatedAt: string;
+  scheduledAt?: string;
+  startedAt?: string;
+  releasedAt?: string;
+  failedAt?: string;
+  canceledAt?: string;
+  notes?: string;
+  metadata?: Record<string, Json>;
+}
+
+export interface ReleaseStore extends ForgeProvider {
+  kind: 'release-store';
+  init(): Promise<void>;
+  create(input: Omit<ReleaseRecord, 'createdAt' | 'updatedAt'>): Promise<ReleaseRecord>;
+  get(id: string): Promise<ReleaseRecord | null>;
+  list(input?: { status?: ReleaseStatus; targetKind?: string }): Promise<ReleaseRecord[]>;
+  update(id: string, patch: Partial<ReleaseRecord>): Promise<ReleaseRecord>;
 }
 
 export interface VcsProvider extends ForgeProvider {
