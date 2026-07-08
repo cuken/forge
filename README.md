@@ -19,6 +19,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - GitHub issue provider via `gh`
 - spec gate for medium/large tasks
 - provider-neutral validation gates before accepting completed runs
+- optional parallel dispatch for multiple ready tasks
 
 ## Self-augmentation docs
 
@@ -71,8 +72,11 @@ forge approve toml
 forge run toml
 forge runs list
 forge runs log <run-id>
+forge runs show <run-id-or-title-fragment>
 forge runs validate <run-id>
+forge runs accept <run-id> --dry-run
 forge runs accept <run-id>
 forge task approve <id>
 forge task run-ready
+forge task run-ready --parallel 3
 ```

@@ -97,7 +97,7 @@ task.command('list').action(async () => { for (const t of await runtime().deps.s
 task.command('spec <id> <body>').action(async (id, body) => { const t = await runtime().writeSpec(id, body); console.log(`${t.id} ${t.status} ${t.spec?.path}`); });
 task.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
 task.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern, chunk => process.stdout.write(chunk)), null, 2)); });
-task.command('run-ready').action(async () => { console.log(JSON.stringify(await runtime().runReady(), null, 2)); });
+task.command('run-ready').option('-p, --parallel <count>', 'maximum ready tasks to run concurrently', v => Number(v), 1).action(async opts => { console.log(JSON.stringify(await runtime().runReady(undefined, chunk => process.stdout.write(chunk), { concurrency: opts.parallel }), null, 2)); });
 
 const run = program.command('run-history').alias('runs').description('Inspect durable task run records');
 run.command('list').option('--task <id>', 'filter by task id').action(async opts => {
@@ -109,6 +109,19 @@ run.command('log <id>').description('Print captured agent output for a run').act
   const store = runtime().deps.runStore;
   if (!store) throw new Error('No run store configured');
   process.stdout.write(await store.readLog(id));
+});
+run.command('show <id>').description('Show durable run metadata by id, prefix, task id, title, or branch fragment').action(async id => {
+  const r = await runtime().showRun(id);
+  console.log(`${r.id} ${r.status} ${r.taskTitle}`);
+  console.log(`task=${r.taskId}`);
+  console.log(`started=${r.startedAt} updated=${r.updatedAt}${r.finishedAt ? ` finished=${r.finishedAt}` : ''}`);
+  if (r.workspace) console.log(`workspace=${r.workspace.path} branch=${r.workspace.branch}`);
+  if (r.environment) console.log(`environment=${r.environment.id} ${r.environment.description}`);
+  console.log(`agent=${r.agentId} exit=${r.exitCode ?? ''}`);
+  console.log(`log=${r.logPath}`);
+  if (r.validation) console.log(`validation=${r.validation.results.every(g => g.status === 'pass') ? 'pass' : 'fail'} ${r.validation.validatedAt}`);
+  if (r.acceptance) console.log(`acceptance=${r.acceptance.status} ${r.acceptance.acceptedAt} ${r.acceptance.message}`);
+  if (r.error) console.log(`error=${r.error}`);
 });
 run.command('review <id>').description('Summarize the change set produced by a succeeded run').action(async id => {
   const summary = await runtime().reviewRun(id);
@@ -123,9 +136,9 @@ run.command('validate <id>').description('Run validation gates for a succeeded r
     if (r.detail) console.log(`  ${r.detail.trim().split('\n').join('\n  ')}`);
   }
 });
-run.command('accept <id>').description('Accept the change set from a succeeded run and mark its task done').option('-m, --message <message>', 'accept/commit message').action(async (id, opts) => {
-  const result = await runtime().acceptRun(id, opts.message);
-  console.log(`${result.status} ${result.runId}: ${result.message}`);
+run.command('accept <id>').description('Accept the change set from a succeeded run and mark its task done').option('-m, --message <message>', 'accept/commit message').option('--dry-run', 'validate and show what would be accepted without changing state').action(async (id, opts) => {
+  const result = await runtime().acceptRun(id, opts.message, { dryRun: opts.dryRun });
+  console.log(`${opts.dryRun ? 'dry-run ' : ''}${result.status} ${result.runId}: ${result.message}`);
 });
 
 program.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });

@@ -54,6 +54,32 @@ describe('Forge vertical slice', () => {
     expect((await rt.deps.store.get(task.id))?.status).toBe('reviewing');
   });
 
+  it('runs multiple ready tasks concurrently when requested', async () => {
+    const { rt, agent } = await makeRuntime();
+    await rt.init('demo');
+    let active = 0;
+    let maxActive = 0;
+    agent.run = async input => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 25));
+      active--;
+      agent.runs.push(input.task.id);
+      return { exitCode: 0, output: `ok ${input.task.id}` };
+    };
+    const first = await rt.createTask('first concurrent task');
+    const second = await rt.createTask('second concurrent task');
+    const third = await rt.createTask('third concurrent task');
+
+    const results = await rt.runReady(undefined, undefined, { concurrency: 2 });
+
+    expect(results.map(result => result.task)).toEqual([first.id, second.id, third.id]);
+    expect(maxActive).toBe(2);
+    await expect(rt.deps.store.get(first.id)).resolves.toMatchObject({ status: 'reviewing' });
+    await expect(rt.deps.store.get(second.id)).resolves.toMatchObject({ status: 'reviewing' });
+    await expect(rt.deps.store.get(third.id)).resolves.toMatchObject({ status: 'reviewing' });
+  });
+
   it('persists run records and captured logs', async () => {
     const { rt } = await makeRuntime();
     await rt.init('demo');
@@ -80,6 +106,9 @@ describe('Forge vertical slice', () => {
     await expect(rt.acceptRun(runId, 'accept reviewable task')).resolves.toMatchObject({ status: 'accepted', message: 'accepted file.txt' });
     expect(changeSet.accepted).toEqual([runId]);
     expect((await rt.deps.store.get(task.id))?.status).toBe('done');
+    const acceptedRun = await rt.showRun('reviewable');
+    expect(acceptedRun.acceptance).toMatchObject({ providerId: 'change-set.memory', status: 'accepted', message: 'accepted file.txt' });
+    expect(acceptedRun.validation?.results).toEqual([]);
   });
 
   it('runs provider-neutral validation gates before accepting completed runs', async () => {
@@ -92,5 +121,19 @@ describe('Forge vertical slice', () => {
     await expect(rt.acceptRun(runId)).rejects.toThrow('Validation failed');
     expect(changeSet.accepted).toEqual([]);
     expect((await rt.deps.store.get(task.id))?.status).toBe('reviewing');
+    expect((await rt.showRun(runId)).validation?.results[0]).toMatchObject({ status: 'fail', message: 'not ok' });
+  });
+
+  it('supports dry-run acceptance without marking the task done', async () => {
+    const { rt, changeSet } = await makeRuntime(new MemoryValidation('pass'));
+    await rt.init('demo');
+    const task = await rt.createTask('dry run acceptance task');
+    const results = await rt.runTask(task.id);
+    const runId = results[0].run!;
+
+    await expect(rt.acceptRun('dry run acceptance', 'accept dry run', { dryRun: true })).resolves.toMatchObject({ status: 'accepted', message: expect.stringContaining('dry run: would accept 1 file') });
+    expect(changeSet.accepted).toEqual([]);
+    expect((await rt.deps.store.get(task.id))?.status).toBe('reviewing');
+    expect((await rt.showRun(runId)).validation?.results[0]).toMatchObject({ status: 'pass' });
   });
 });

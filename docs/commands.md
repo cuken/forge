@@ -145,7 +145,9 @@ Runs one ready task by ID or unique title fragment.
 
 ## `forge task run-ready`
 
-Runs all ready tasks sequentially in the current implementation.
+Runs all ready tasks. By default Forge runs one task at a time. Use `--parallel <count>` (or `-p <count>`) to let Forge dispatch multiple ready tasks concurrently.
+
+Parallel execution still goes through the provider contracts for each task: the runtime asks the workspace provider for an isolated workspace, the isolation provider for an execution environment, the agent provider to run in that environment, and the run store to persist task-specific logs/metadata. Providers remain responsible for their own external-system behavior; Forge only controls how many ready task pipelines are in flight.
 
 For each ready task:
 
@@ -158,7 +160,7 @@ For each ready task:
 7. Persist a durable run record in `.forge/runs/<run-id>.json` with task, workspace, environment, agent, status, exit code, and log path metadata.
 8. Mark task `reviewing` on success or `failed` on failure.
 
-Future implementations should replace sequential dispatch with a graph scheduler while preserving provider boundaries.
+Results are returned in ready-task order even when tasks finish out of order. A future implementation can replace this ready-task dispatcher with a graph scheduler while preserving the same provider boundaries.
 
 ## `forge runs list`
 
@@ -172,13 +174,19 @@ Alias group: `forge run-history log <id>`.
 
 Prints captured output for a durable run from `.forge/logs/<run-id>.log` so users can inspect agent output after the run finishes.
 
+## `forge runs show <id>`
+
+Alias group: `forge run-history show <id>`.
+
+Shows human-friendly durable run metadata including task, workspace, environment, validation, acceptance, and log path. Run arguments resolve by exact ID, ID prefix, task ID prefix, task title fragment, or workspace branch fragment. Ambiguous fragments are rejected.
+
 ## `forge runs review <id>`
 
 Summarizes the provider-neutral change set for a succeeded run. The runtime calls the configured `ChangeSetProvider`; the built-in Git worktree implementation reports changed files, diff stats, and name-status output from the run workspace.
 
 ## `forge runs validate <id>`
 
-Runs provider-neutral validation gates for a succeeded run. Configure the built-in shell validation provider in `.forge/config.toml`:
+Runs provider-neutral validation gates for a succeeded run and records the validation results on the run record. Configure the built-in shell validation provider in `.forge/config.toml`:
 
 ```toml
 [providers]
@@ -197,5 +205,6 @@ Accepts the provider-neutral change set for a succeeded run whose task is `revie
 Options:
 
 - `-m, --message <message>` — accept/commit message passed to the change set provider
+- `--dry-run` — run validation and review the change set without accepting, merging, or marking the task done
 
-The built-in Git worktree implementation stages and commits workspace changes on the run branch, then merges that branch into the project checkout.
+The built-in Git worktree implementation stages and commits workspace changes on the run branch, then merges that branch into the project checkout. Successful acceptance records acceptance metadata on the run record; validation results are recorded for both normal and dry-run accepts.

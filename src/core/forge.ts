@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
 import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type ChangeSetSummary } from './changes.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
-import type { IsolationProvider, IsolationStatus } from './isolation.js';
+import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
 import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
@@ -103,13 +103,23 @@ export class ForgeRuntime {
     return provider;
   }
 
-  private async resolveRun(idOrPrefix: string) {
+  async resolveRun(idOrPrefix: string) {
     if (!this.deps.runStore) throw new Error('No run store configured');
     const exact = await this.deps.runStore.get(idOrPrefix);
     if (exact) return exact;
-    const matches = (await this.deps.runStore.list()).filter(run => run.id.startsWith(idOrPrefix) || run.taskId.startsWith(idOrPrefix));
+    const needle = idOrPrefix.toLowerCase();
+    const matches = (await this.deps.runStore.list()).filter(run =>
+      run.id.startsWith(idOrPrefix) ||
+      run.taskId.startsWith(idOrPrefix) ||
+      run.taskTitle.toLowerCase().includes(needle) ||
+      run.workspace?.branch.toLowerCase().includes(needle)
+    );
     if (matches.length !== 1) throw new Error(matches.length === 0 ? `No run matches '${idOrPrefix}'` : `Multiple runs match '${idOrPrefix}'`);
     return matches[0];
+  }
+
+  async showRun(idOrPrefix: string) {
+    return this.resolveRun(idOrPrefix);
   }
 
   async reviewRun(idOrPrefix: string): Promise<ChangeSetSummary> {
@@ -123,26 +133,35 @@ export class ForgeRuntime {
     if (run.status !== 'succeeded') throw new Error(`Run ${run.id} is ${run.status}, not succeeded`);
     const providers = this.providers().filter(provider => hasValidation(provider));
     const results = (await Promise.all(providers.map(provider => provider.validate({ run })))).flat();
+    await this.deps.runStore?.update(run.id, { validation: { validatedAt: new Date().toISOString(), results } });
     const failed = results.filter(result => result.status === 'fail');
     if (failed.length) throw new Error(`Validation failed for run ${run.id}: ${failed.map(result => result.message).join('; ')}`);
     return results;
   }
 
-  async acceptRun(idOrPrefix: string, message?: string): Promise<AcceptChangeSetResult> {
+  async acceptRun(idOrPrefix: string, message?: string, options: { dryRun?: boolean } = {}): Promise<AcceptChangeSetResult> {
     const run = await this.resolveRun(idOrPrefix);
     if (run.status !== 'succeeded') throw new Error(`Run ${run.id} is ${run.status}, not succeeded`);
     const task = await this.deps.store.get(run.taskId);
     if (!task || task.status !== 'reviewing') throw new Error(`Task ${run.taskId} is ${task?.status ?? 'missing'}, not reviewing`);
     await this.validateRun(run.id);
+    if (options.dryRun) {
+      const summary = await this.changeSetProvider().review({ run });
+      return { providerId: summary.providerId, runId: run.id, taskId: run.taskId, status: summary.status === 'empty' ? 'empty' : 'accepted', message: `dry run: would accept ${summary.files.length} file(s)${message ? ` with message '${message}'` : ''}` };
+    }
     const result = await this.changeSetProvider().accept({ run, message });
+    await this.deps.runStore?.update(run.id, { acceptance: { acceptedAt: new Date().toISOString(), providerId: result.providerId, status: result.status, message: result.message } });
     await this.deps.store.update(run.taskId, { status: 'done' });
     return result;
   }
 
-  async runReady(taskId?: string, observer?: (event: string) => void) {
+  async runReady(taskId?: string, observer?: (event: string) => void, options: { concurrency?: number } = {}) {
     const ready = (await this.deps.store.list()).filter(t => t.status === 'ready' && (!taskId || t.id === taskId));
-    const results = [];
-    for (const task of ready) {
+    const requestedConcurrency = Math.floor(options.concurrency ?? 1);
+    const concurrency = Number.isFinite(requestedConcurrency) && requestedConcurrency > 0 ? requestedConcurrency : 1;
+    const results: Array<{ task: string; run?: string; workspace?: { id: string; path: string; branch: string }; environment?: ExecutionEnvironment; result?: { exitCode: number; output: string }; error?: string }> = [];
+    let next = 0;
+    const runOne = async (task: Task) => {
       observer?.(`starting task ${task.id}: ${task.title}\n`);
       const run = await this.deps.runStore?.start({ task, agentId: this.deps.agent.id });
       const outputWrites: Promise<void>[] = [];
@@ -172,13 +191,20 @@ export class ForgeRuntime {
         const status = result.exitCode === 0 ? 'reviewing' : 'failed';
         await this.deps.store.update(task.id, { status });
         await this.deps.runStore?.update(run!.id, { status: result.exitCode === 0 ? 'succeeded' : 'failed', exitCode: result.exitCode, finishedAt: new Date().toISOString() });
-        results.push({ task: task.id, run: run?.id, workspace: ws, environment: env, result });
+        return { task: task.id, run: run?.id, workspace: ws, environment: env, result };
       } catch (error) {
         await this.deps.store.update(task.id, { status: 'failed' });
         await this.deps.runStore?.update(run!.id, { status: 'failed', error: String(error), finishedAt: new Date().toISOString() });
-        results.push({ task: task.id, run: run?.id, error: String(error) });
+        return { task: task.id, run: run?.id, error: String(error) };
       }
-    }
+    };
+    const worker = async () => {
+      while (next < ready.length) {
+        const task = ready[next++];
+        results[ready.indexOf(task)] = await runOne(task);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, ready.length) }, worker));
     return results;
   }
 }

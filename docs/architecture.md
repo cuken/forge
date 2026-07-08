@@ -57,7 +57,7 @@ await git.push('upstream', 'main');
 - `forge task create` creates local tasks and optionally GitHub issues.
 - `forge task spec` writes a spec file and moves a task to approval.
 - `forge task approve` marks the spec approved.
-- `forge task run-ready` creates worktrees, prepares an execution environment, invokes the configured agent for ready tasks, and records durable run metadata/logs for history inspection. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
+- `forge task run-ready` creates worktrees, prepares an execution environment, invokes the configured agent for ready tasks, and records durable run metadata/logs for history inspection. It can dispatch multiple ready tasks concurrently with `--parallel`, but each task still crosses only the generic workspace, isolation, agent, and store provider contracts. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
 - `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime.
 
 ## Extension direction
