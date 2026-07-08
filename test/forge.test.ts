@@ -63,6 +63,7 @@ describe('Forge vertical slice', () => {
     const { rt } = await makeRuntime();
     const cfg = await rt.init('demo');
     expect(cfg.providers.store).toBe('store.filesystem');
+    expect(cfg.notifications?.channel).toBe('stderr');
     expect(await rt.deps.vcs.isRepo()).toBe(true);
   });
 

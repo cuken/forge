@@ -21,6 +21,18 @@ The CLI does not know about Git, GitHub, or pi. It calls `ForgeRuntime.doctor()`
 
 Current checks:
 
+Notification delivery is configured alongside other providers. The built-in console notifier is selected with:
+
+```toml
+[providers]
+notification = "console"
+
+[notifications]
+channel = "stderr" # or "stdout"
+```
+
+Unknown notification providers or channels fail during CLI wiring before commands start work.
+
 - `vcs.git`: git binary, repository, worktree support
 - selected isolation provider via `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml`
 - `agent.pi`: pi binary, pi version

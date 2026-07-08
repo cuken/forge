@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { basename } from 'node:path';
 import { ForgeRuntime } from './core/forge.js';
@@ -22,6 +23,7 @@ import { FileWorkstreamProvider } from './providers/workstream-filesystem/index.
 import { LinearWorkstreamProvider } from './providers/workstream-linear/index.js';
 import { GitHubIssuesWorkstreamProvider } from './providers/workstream-github/index.js';
 import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
+import { ConsoleNotificationProvider, type ConsoleNotificationChannel } from './providers/notification-console/index.js';
 import { createInterface } from 'node:readline/promises';
 
 export function isolationProvider() {
@@ -31,6 +33,16 @@ export function isolationProvider() {
   if (requested === 'podman' || requested === 'isolation.podman') return new PodmanIsolationProvider({ image: process.env.FORGE_PODMAN_IMAGE, readyCommand: process.env.FORGE_PODMAN_READY ? ['sh', '-lc', process.env.FORGE_PODMAN_READY] : undefined, readyAttempts: process.env.FORGE_PODMAN_READY_ATTEMPTS ? Number(process.env.FORGE_PODMAN_READY_ATTEMPTS) : undefined, mountPiConfig: process.env.FORGE_PODMAN_MOUNT_PI_CONFIG !== '0', piConfigPath: process.env.FORGE_PODMAN_PI_CONFIG });
   if (requested === 'host' || requested === 'isolation.host') return new HostIsolationProvider();
   throw new Error(`Unknown isolation provider '${requested}'. Expected host, docker, podman, isolation.host, isolation.docker, or isolation.podman.`);
+}
+
+export function notificationProvider() {
+  const config = readForgeConfigSync();
+  const requested = config?.providers?.notification ?? (config ? undefined : 'console');
+  if (!requested) return undefined;
+  if (requested !== 'console' && requested !== 'notification.console') throw new Error(`Unknown notification provider '${requested}'. Expected console or notification.console.`);
+  const channel = config?.notifications?.channel ?? 'stderr';
+  if (channel !== 'stdout' && channel !== 'stderr') throw new Error(`Unknown notification channel '${channel}'. Expected stdout or stderr.`);
+  return new ConsoleNotificationProvider(channel as ConsoleNotificationChannel);
 }
 
 function runtime() {
@@ -54,7 +66,7 @@ function runtime() {
     : requestedWorkstream === 'github' || requestedWorkstream === 'workstream.github'
       ? new GitHubIssuesWorkstreamProvider(config?.github ?? {})
       : new FileWorkstreamProvider();
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) });
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), notification: notificationProvider() });
 }
 
 const program = new Command();
@@ -237,4 +249,6 @@ run.command('accept <id>').description('Accept the change set from a succeeded r
 program.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
 program.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern, chunk => process.stdout.write(chunk)), null, 2)); });
 
-program.parseAsync().catch(err => { console.error(err instanceof Error ? err.message : err); process.exit(1); });
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  program.parseAsync().catch(err => { console.error(err instanceof Error ? err.message : err); process.exit(1); });
+}

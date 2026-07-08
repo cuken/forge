@@ -45,6 +45,7 @@ export interface ForgeConfig {
   github?: { owner?: string; repo?: string };
   linear?: { teamKey?: string; project?: string };
   validation?: { commands: string[] };
+  notifications?: { channel?: string };
 }
 
 export interface TaskStore extends ForgeProvider {

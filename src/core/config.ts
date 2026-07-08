@@ -49,6 +49,8 @@ function parseForgeToml(input: string): Partial<ForgeConfig> {
       config.linear = { ...config.linear, [key]: value };
     } else if (section === 'github') {
       config.github = { ...config.github, [key]: value };
+    } else if (section === 'notifications') {
+      config.notifications = { ...config.notifications, [key]: value };
     }
   }
   return config;

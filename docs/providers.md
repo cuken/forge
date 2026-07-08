@@ -142,6 +142,8 @@ Built-in implementation: `workstream-planner.pi`, which runs the configured pi c
 
 `ForgeRuntime` discovers this capability structurally with `hasNotification()`. Providers that do not implement it are ignored. Notification delivery is best-effort: provider failures are swallowed so a broken notification backend cannot change task/run state or mask the real agent result. Providers should therefore log or track their own delivery errors if users need diagnostics.
 
+The built-in `notification.console` implementation writes lifecycle messages to either `stderr` or `stdout`. Select it with `[providers] notification = "console"` and `[notifications] channel = "stderr"` (or `"stdout"`). Unknown notification providers or channels fail during CLI wiring before Forge starts work, matching the validation behavior for other configured providers.
+
 Future implementations can deliver the same neutral events through any channel or service while keeping runtime orchestration provider-neutral.
 
 ## Current implementations
@@ -154,6 +156,7 @@ Future implementations can deliver the same neutral events through any channel o
 - `src/providers/workstream-linear` implements `WorkstreamProvider` against Linear GraphQL, including labels, issue relations, comments, link-cache persistence, and doctor checks.
 - `src/providers/workstream-github` implements `WorkstreamProvider` against GitHub Issues, including labels, issue-body metadata, comments, link-cache persistence, and doctor checks.
 - `src/providers/planner-pi` implements `WorkstreamPlannerProvider` by interviewing through pi and emitting dependency-ordered workstream drafts.
+- `src/providers/notification-console` implements `NotificationProvider` by writing run lifecycle notifications to the configured console stream.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task and provides `change-set.git-worktree` for reviewing changed files and accepting run branches back into the project checkout. New configs record this provider as `providers.changeSet`.

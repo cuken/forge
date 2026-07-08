@@ -4,10 +4,14 @@ validation = "shell"
 lease = "filesystem"
 workstream = "github"
 workstreamPlanner = "pi"
+notification = "console"
 
 [github]
 owner = "cuken"
 repo = "forge"
+
+[notifications]
+channel = "stderr"
 
 [validation]
 commands = ["npm ci", "npm test", "npm run build"]
