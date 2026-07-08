@@ -11,6 +11,7 @@ import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
 import type { NotificationProvider, RunNotificationInput } from '../src/core/notification.js';
+import type { LifecycleHookPayload, LifecycleHookProvider } from '../src/core/lifecycle.js';
 import type { SpecProvider } from '../src/core/spec.js';
 import type { GateDecision, GateProvider } from '../src/core/gate.js';
 import type { ReleaseVcsProvider, ReleaseVcsRef, ReleaseVcsTarget } from '../src/core/release-vcs.js';
@@ -39,6 +40,7 @@ class MemoryLease implements LeaseProvider { id='lease.memory'; kind='lease' as 
 class MemorySpec implements SpecProvider, ForgeProvider { id='spec.memory'; kind='spec' as const; async generateSpec(input:{task:Task}){ return { providerId: this.id, body: `# Generated spec\n\n${input.task.title}` }; } }
 class MemoryNotification implements NotificationProvider, ForgeProvider { id='notification.memory'; kind='notification'; events:RunNotificationInput[]=[]; async notifyRun(input:RunNotificationInput){ this.events.push(input); } }
 class BrokenNotification implements NotificationProvider, ForgeProvider { id='notification.broken'; kind='notification'; async notifyRun(){ throw new Error('notification backend unreachable'); } }
+class MemoryLifecycle implements LifecycleHookProvider, ForgeProvider { id='lifecycle.memory'; kind='lifecycle'; events:LifecycleHookPayload[]=[]; constructor(private error?: Error){} async lifecycleHook(input:LifecycleHookPayload){ this.events.push(input); if (this.error) throw this.error; } }
 class DecisionGate implements GateProvider { id='gate.memory'; kind='gate' as const; constructor(private decisions: Record<string, GateDecision | null>){} async publishDecision(){ throw new Error('not used'); } async readDecision(input:{gateId:string}){ return this.decisions[input.gateId] ?? null; } }
 
 async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
@@ -460,6 +462,46 @@ describe('Forge vertical slice', () => {
     const acceptedRun = await rt.showRun('reviewable');
     expect(acceptedRun.acceptance).toMatchObject({ providerId: 'change-set.memory', status: 'accepted', message: 'accepted file.txt' });
     expect(acceptedRun.validation?.results).toEqual([]);
+  });
+
+  it('emits run accepted lifecycle hooks after persisting local acceptance state', async () => {
+    const { rt, changeSet } = await makeRuntime(new MemoryValidation('pass'));
+    const lifecycle = new MemoryLifecycle();
+    rt.deps.lifecycle = lifecycle;
+    await rt.init('demo');
+    const task = await rt.createTask('hooked acceptance task');
+    const results = await rt.runTask(task.id);
+    const runId = results[0].run!;
+
+    await expect(rt.acceptRun(runId, 'accept with hook')).resolves.toMatchObject({ status: 'accepted' });
+
+    expect(changeSet.accepted).toEqual([runId]);
+    const acceptedEvents = lifecycle.events.filter(event => event.event === 'run.accepted');
+    expect(acceptedEvents).toHaveLength(1);
+    expect(acceptedEvents[0]).toMatchObject({
+      event: 'run.accepted',
+      identity: { runId, taskId: task.id, taskTitle: task.title },
+      task: { status: 'done' },
+      commit: { providerId: 'change-set.memory', status: 'accepted', message: 'accepted file.txt' },
+    });
+    expect((await rt.showRun(runId)).acceptance).toMatchObject({ status: 'accepted' });
+  });
+
+  it('surfaces run accepted lifecycle hook failures without silently ignoring accepted state', async () => {
+    const { rt, changeSet } = await makeRuntime(new MemoryValidation('pass'));
+    const lifecycle = new MemoryLifecycle(new Error('webhook unreachable: rotate token'));
+    rt.deps.lifecycle = lifecycle;
+    await rt.init('demo');
+    const task = await rt.createTask('broken hook acceptance task');
+    const results = await rt.runTask(task.id);
+    const runId = results[0].run!;
+
+    await expect(rt.acceptRun(runId, 'accept despite broken hook')).rejects.toThrow('Lifecycle hook run.accepted failed after local state was persisted');
+
+    expect(changeSet.accepted).toEqual([runId]);
+    expect(lifecycle.events.filter(event => event.event === 'run.accepted')).toHaveLength(1);
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'done' });
+    await expect(rt.showRun(runId)).resolves.toMatchObject({ acceptance: { status: 'accepted' } });
   });
 
   it('reports a dirty target checkout as a blocked acceptance result', async () => {
