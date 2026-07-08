@@ -196,6 +196,13 @@ export class ForgeRuntime {
     return lines;
   }
 
+  async sweepWorkstream(observer?: (event: string) => void, options: { concurrency?: number } = {}) {
+    const enqueued = await this.enqueueWorkstream();
+    const runResults = await this.runReady(undefined, observer, { concurrency: options.concurrency });
+    const status = await this.status();
+    return { enqueued, runResults, status };
+  }
+
   async enqueueWorkstream(ids?: string[]): Promise<Task[]> {
     const provider = this.workstreamProvider();
     const items = await provider.list();

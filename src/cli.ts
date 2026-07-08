@@ -19,6 +19,7 @@ import { HeuristicTaskDiscoveryProvider } from './providers/discovery-heuristic/
 import { MemoryLeaseProvider } from './providers/lease-memory/index.js';
 import { FileLeaseProvider } from './providers/lease-filesystem/index.js';
 import { FileWorkstreamProvider } from './providers/workstream-filesystem/index.js';
+import { LinearWorkstreamProvider } from './providers/workstream-linear/index.js';
 import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
 import { createInterface } from 'node:readline/promises';
 
@@ -42,12 +43,13 @@ function runtime() {
   const requestedLease = config?.providers?.lease;
   if (requestedLease && !['memory', 'lease.memory', 'filesystem', 'lease.filesystem'].includes(requestedLease)) throw new Error(`Unknown lease provider '${requestedLease}'. Expected memory, filesystem, lease.memory, or lease.filesystem.`);
   const requestedWorkstream = config?.providers?.workstream;
-  if (requestedWorkstream && requestedWorkstream !== 'filesystem' && requestedWorkstream !== 'workstream.filesystem') throw new Error(`Unknown workstream provider '${requestedWorkstream}'. Expected filesystem or workstream.filesystem.`);
+  if (requestedWorkstream && !['filesystem', 'workstream.filesystem', 'linear', 'workstream.linear'].includes(requestedWorkstream)) throw new Error(`Unknown workstream provider '${requestedWorkstream}'. Expected filesystem, linear, workstream.filesystem, or workstream.linear.`);
   const requestedPlanner = config?.providers?.workstreamPlanner;
   if (requestedPlanner && requestedPlanner !== 'pi' && requestedPlanner !== 'workstream-planner.pi') throw new Error(`Unknown workstream planner provider '${requestedPlanner}'. Expected pi or workstream-planner.pi.`);
   const staleAfterMs = process.env.FORGE_LEASE_STALE_AFTER_MS ? Number(process.env.FORGE_LEASE_STALE_AFTER_MS) : undefined;
   const lease = requestedLease === 'filesystem' || requestedLease === 'lease.filesystem' ? new FileLeaseProvider(process.cwd(), staleAfterMs) : new MemoryLeaseProvider();
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream: new FileWorkstreamProvider(), workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) });
+  const workstream = requestedWorkstream === 'linear' || requestedWorkstream === 'workstream.linear' ? new LinearWorkstreamProvider(config?.linear ?? {}) : new FileWorkstreamProvider();
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) });
 }
 
 const program = new Command();
@@ -110,6 +112,30 @@ lease.command('status').description('List active resource leases after stale cle
 lease.command('cleanup').description('Remove stale resource leases').action(async () => {
   const removed = await runtime().cleanupLeases();
   console.log(`removed ${removed} stale lease(s)`);
+});
+
+program.command('process').description('Continuously sweep the workstream: enqueue unblocked items, run ready tasks, then print pending human actions').option('--once', 'run a single sweep and exit').option('--interval <seconds>', 'seconds between sweeps', v => Number(v), 60).option('-p, --parallel <count>', 'maximum ready tasks to run concurrently during each sweep', v => Number(v), 2).action(async opts => {
+  const rt = runtime();
+  let stopping = false;
+  let wakeSleep: (() => void) | undefined;
+  const stop = () => { stopping = true; wakeSleep?.(); };
+  process.once('SIGINT', stop);
+  const sleep = (seconds: number) => new Promise<void>(resolve => {
+    const timer = setTimeout(resolve, Math.max(0, seconds) * 1000);
+    wakeSleep = () => { clearTimeout(timer); resolve(); };
+  }).finally(() => { wakeSleep = undefined; });
+  try {
+    do {
+      const result = await rt.sweepWorkstream(chunk => process.stdout.write(chunk), { concurrency: opts.parallel });
+      console.log(`sweep: enqueued ${result.enqueued.length}, ran ${result.runResults.length}`);
+      if (!result.status.length) console.log('no pending human actions');
+      for (const line of result.status) console.log(line);
+      if (opts.once || stopping) break;
+      await sleep(opts.interval);
+    } while (!stopping);
+  } finally {
+    process.off('SIGINT', stop);
+  }
 });
 
 const workstream = program.command('workstream').description('Manage provider-neutral workstream backlog items');

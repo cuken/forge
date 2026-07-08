@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ForgeRuntime } from '../src/core/forge.js';
 import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
+import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
 import { extractJsonBlock } from '../src/providers/planner-pi/index.js';
 import type { WorkstreamPlannerProvider, WorkstreamPlanRequest } from '../src/core/workstream.js';
@@ -34,7 +35,7 @@ class MemoryPlanner implements WorkstreamPlannerProvider {
 
 async function makeRuntime(planner?: WorkstreamPlannerProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-workstream-test-'));
-  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), workstream: new FileWorkstreamProvider(root), workstreamPlanner: planner });
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), workstream: new FileWorkstreamProvider(root), workstreamPlanner: planner });
   return { rt, root };
 }
 
@@ -123,6 +124,35 @@ describe('workstream backlog', () => {
     const items = await rt.listWorkstream();
     expect(items).toHaveLength(3);
     expect(items[0]).toMatchObject({ id: 'base', status: 'queued', taskId: queuedTask.id });
+  });
+
+  it('sweeps once by enqueueing unblocked workstream items, running ready tasks, and reporting human gates', async () => {
+    const { rt, root } = await makeRuntime();
+    await importItems(rt, root, [
+      { id: 'small', title: 'Small item', complexity: 'small' },
+      { id: 'needs-spec', title: 'Spec gated item', complexity: 'medium' },
+      { id: 'blocked', title: 'Blocked item', dependencies: ['small'] },
+    ]);
+
+    const result = await rt.sweepWorkstream(undefined, { concurrency: 2 });
+
+    expect(result.enqueued.map(task => [task.title, task.status])).toEqual([
+      ['Small item', 'ready'],
+      ['Spec gated item', 'needs-spec'],
+    ]);
+    expect(result.runResults).toHaveLength(1);
+    const tasks = await rt.deps.store.list();
+    expect(tasks.map(task => [task.title, task.status])).toEqual(expect.arrayContaining([
+      ['Small item', 'reviewing'],
+      ['Spec gated item', 'needs-spec'],
+    ]));
+    expect(result.status).toEqual(expect.arrayContaining([
+      expect.stringContaining('needs spec: Spec gated item'),
+      expect.stringContaining('awaiting review: Small item'),
+    ]));
+    expect(await rt.listWorkstream()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'blocked', status: 'planned', taskId: undefined }),
+    ]));
   });
 
   it('extracts balanced JSON blocks from chatty planner output', () => {

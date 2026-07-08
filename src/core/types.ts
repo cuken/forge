@@ -42,6 +42,7 @@ export interface ForgeConfig {
   };
   pi?: { command: string; args: string[] };
   github?: { owner?: string; repo?: string };
+  linear?: { teamKey?: string; project?: string };
   validation?: { commands: string[] };
 }
 

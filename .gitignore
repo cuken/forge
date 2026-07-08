@@ -10,3 +10,4 @@ dist/
 ../.forge-worktrees/
 .env
 .DS_Store
+.claude/settings.local.json

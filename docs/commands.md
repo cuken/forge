@@ -94,6 +94,27 @@ Lists active provider-neutral resource leases after asking the configured lease 
 
 Removes stale leases through the configured lease provider and prints the number removed. For `lease.filesystem`, stale age defaults to one hour and can be changed with `FORGE_LEASE_STALE_AFTER_MS`.
 
+## `forge process`
+
+Runs a thin CLI loop around `ForgeRuntime.sweepWorkstream()`. Each sweep:
+
+1. Enqueues planned workstream items whose dependencies are done.
+2. Runs all ready tasks with bounded parallelism.
+3. Prints the same pending-human-actions summary as `forge status`.
+
+Options:
+
+- `--once` — run one sweep and exit
+- `--interval <seconds>` — delay between sweeps (default: 60)
+- `--parallel <count>` / `-p <count>` — ready-task parallelism for each sweep (default: 2)
+
+```bash
+forge process --parallel 3
+forge process --once
+```
+
+The daemon never bypasses human gates: medium/large workstream items still stop at `needs-spec`, specs remain `awaiting-approval` until a human runs `forge task approve`, and completed runs remain `reviewing` until a human validates/reviews/accepts them. Press Ctrl-C to request graceful shutdown; Forge finishes the in-flight sweep, prints its summary, and exits before starting another sweep.
+
 ## `forge workstream plan <prompt...>`
 
 Defines a workstream interactively with the configured `WorkstreamPlannerProvider`. The provider may ask clarifying questions (scope edges, sequencing, constraints) through a generic channel; the CLI relays them as terminal prompts. Pass `--no-questions` to plan without an interview. The resulting items are merged into the existing backlog — queued items are untouched, and new item ids that collide with backlog ids are suffixed (with intra-plan dependency references remapped to match).

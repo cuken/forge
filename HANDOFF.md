@@ -129,12 +129,15 @@ commands = ["npm ci", "npm test", "npm run build"]
 - `WorkstreamPlannerProvider` turns a natural-language goal into workstream drafts; the `ask` callback in its contract is a generic clarification channel (CLI relays questions as terminal prompts; other hosts can use other surfaces).
 - Current providers:
   - `workstream.filesystem` — backlog state in `.forge/workstream.json`; re-import merges by id and preserves queued state
+  - `workstream.linear` — Linear GraphQL backend (`[providers] workstream = "linear"`, `[linear] teamKey = "ENG"`, `LINEAR_API_KEY` env); issue identifiers are item ids, `forge:*` labels map complexity/queued state, blocked-by relations map dependencies, task links cached in `.forge/linear-workstream-links.json`. Not yet smoke-tested against a live workspace.
   - `workstream-planner.pi` — asks pi for clarifying questions, then for a JSON plan; lenient JSON extraction from chatty output
 - Commands:
   - `forge workstream plan <prompt...> [--no-questions]`
-  - `forge workstream import <file.json>`
+  - `forge workstream import <file.json> [--replace]`
   - `forge workstream list`
   - `forge workstream enqueue [ids...]`
+  - `forge status` — every pending human action with a runnable command
+  - `forge process [--once] [--interval <s>] [-p <n>]` — daemon sweep loop: enqueue unblocked → run ready → report human gates; never auto-approves or auto-accepts
 - Enqueue is a safe repeated sweep: it only queues planned items whose dependencies' tasks are `done`, marks items queued with their task id (no duplicates), and explicit ids force past gating. Tasks flow through the normal createTask path, so discovery scopes and spec gates apply.
 - Future implementations behind the same contracts: Linear, GitHub Issues, Jira backlogs; other planner agents.
 

@@ -45,6 +45,8 @@ function parseForgeToml(input: string): Partial<ForgeConfig> {
     const [, key, value] = assignment;
     if (section === 'providers') {
       config.providers = { store: '', vcs: '', workspace: '', agent: '', ...config.providers, [key]: value };
+    } else if (section === 'linear') {
+      config.linear = { ...config.linear, [key]: value };
     }
   }
   return config;
