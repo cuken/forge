@@ -130,7 +130,53 @@ export class ForgeRuntime {
 
   async sync(input: SyncInput = {}): Promise<SyncResult[]> {
     const tasks = this.providers().flatMap(provider => hasSync(provider) ? provider.syncTasks() : []);
+    if (this.providers().some(provider => hasGate(provider))) {
+      tasks.unshift({ id: 'gate.decisions', label: 'external gate decisions', run: syncInput => this.applyGateDecisions(syncInput) });
+    }
     return runSyncTasks(tasks, input);
+  }
+
+  private async applyGateDecisions(input: SyncInput = {}): Promise<SyncResult> {
+    const gate = this.gateProvider();
+    const applied: string[] = [], skipped: string[] = [], failed: string[] = [];
+    const tasks = await this.deps.store.list();
+    const taskById = new Map(tasks.map(task => [task.id, task]));
+
+    for (const task of tasks.filter(task => task.status === 'awaiting-approval' && task.spec && !task.spec.approved)) {
+      const label = `spec ${task.id}`;
+      try {
+        const decision = await gate.readDecision({ gateId: `task:${task.id}`, kind: 'spec-approval', task });
+        if (!decision || decision.status === 'pending') { skipped.push(`${label}: pending`); continue; }
+        if (decision.status !== 'approved') { skipped.push(`${label}: ${decision.status}`); continue; }
+        if (input.dryRun) { applied.push(`${label}: would approve`); continue; }
+        await this.approve(task.id);
+        applied.push(`${label}: approved${decision.decidedBy ? ` by ${decision.decidedBy}` : ''}`);
+      } catch (error) {
+        failed.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    const runs = this.deps.runStore ? await this.deps.runStore.list() : [];
+    for (const run of runs.filter(run => run.status === 'succeeded' && !run.acceptance)) {
+      const task = taskById.get(run.taskId);
+      if (task?.status !== 'reviewing') continue;
+      const label = `run ${run.id}`;
+      try {
+        const decision = await gate.readDecision({ gateId: `run:${run.id}`, kind: 'run-acceptance', task, run });
+        if (!decision || decision.status === 'pending') { skipped.push(`${label}: pending`); continue; }
+        if (decision.status !== 'approved') { skipped.push(`${label}: ${decision.status}`); continue; }
+        if (input.dryRun) { applied.push(`${label}: would accept`); continue; }
+        const result = await this.acceptRun(run.id, decision.message ?? input.message);
+        const message = `${label}: ${result.status}${result.message ? ` (${result.message})` : ''}`;
+        if (result.status === 'accepted' || result.status === 'empty') applied.push(message);
+        else failed.push(message);
+      } catch (error) {
+        failed.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    const detail = [`applied:\n${applied.map(line => `- ${line}`).join('\n') || '- none'}`, `skipped:\n${skipped.map(line => `- ${line}`).join('\n') || '- none'}`, `failed:\n${failed.map(line => `- ${line}`).join('\n') || '- none'}`].join('\n');
+    return { id: 'gate.decisions', status: failed.length ? 'failed' : applied.length ? 'changed' : 'unchanged', message: `applied ${applied.length}, skipped ${skipped.length}, failed ${failed.length} external gate decision(s)`, detail };
   }
 
   private leaseProvider(): LeaseProvider | undefined {

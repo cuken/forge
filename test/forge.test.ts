@@ -12,6 +12,7 @@ import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
 import type { NotificationProvider, RunNotificationInput } from '../src/core/notification.js';
 import type { SpecProvider } from '../src/core/spec.js';
+import type { GateDecision, GateProvider } from '../src/core/gate.js';
 import type { ReleaseVcsProvider, ReleaseVcsRef, ReleaseVcsTarget } from '../src/core/release-vcs.js';
 import { LeaseConflictError, type LeaseHandle, type LeaseProvider } from '../src/core/lease.js';
 import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
@@ -38,6 +39,7 @@ class MemoryLease implements LeaseProvider { id='lease.memory'; kind='lease' as 
 class MemorySpec implements SpecProvider, ForgeProvider { id='spec.memory'; kind='spec' as const; async generateSpec(input:{task:Task}){ return { providerId: this.id, body: `# Generated spec\n\n${input.task.title}` }; } }
 class MemoryNotification implements NotificationProvider, ForgeProvider { id='notification.memory'; kind='notification'; events:RunNotificationInput[]=[]; async notifyRun(input:RunNotificationInput){ this.events.push(input); } }
 class BrokenNotification implements NotificationProvider, ForgeProvider { id='notification.broken'; kind='notification'; async notifyRun(){ throw new Error('notification backend unreachable'); } }
+class DecisionGate implements GateProvider { id='gate.memory'; kind='gate' as const; constructor(private decisions: Record<string, GateDecision | null>){} async publishDecision(){ throw new Error('not used'); } async readDecision(input:{gateId:string}){ return this.decisions[input.gateId] ?? null; } }
 
 async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
@@ -474,6 +476,58 @@ describe('Forge vertical slice', () => {
     expect(changeSet.accepted).toEqual([]);
     expect((await rt.deps.store.get(task.id))?.status).toBe('reviewing');
     expect((await rt.showRun(runId)).validation?.results[0]).toMatchObject({ status: 'fail', message: 'not ok' });
+  });
+
+  it('applies approved external gate decisions during sync through runtime gates', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+    const changeSet = new MemoryChangeSet();
+    const store = new FileTaskStore(root);
+    const runStore = new FileRunStore(root);
+    const rt = new ForgeRuntime({ root, store, runStore, vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet, validation: new MemoryValidation('pass'), gate: new DecisionGate({}) });
+    await rt.init('demo');
+    const specTask = await rt.createTask('external spec approval', { complexity: 'medium' });
+    await rt.writeSpec(specTask.id, '# Spec');
+    const runTask = await rt.createTask('external run acceptance');
+    const [runResult] = await rt.runTask(runTask.id);
+    const runId = runResult.run!;
+    rt.deps.gate = new DecisionGate({
+      [`task:${specTask.id}`]: { providerId: 'gate.memory', gateId: `task:${specTask.id}`, kind: 'spec-approval', status: 'approved', taskId: specTask.id, decidedBy: 'reviewer' },
+      [`run:${runId}`]: { providerId: 'gate.memory', gateId: `run:${runId}`, kind: 'run-acceptance', status: 'approved', taskId: runTask.id, runId, message: 'ship it' },
+    });
+
+    const results = await rt.sync({ message: 'sync fallback message' });
+
+    expect(results[0]).toMatchObject({ id: 'gate.decisions', status: 'changed', message: 'applied 2, skipped 0, failed 0 external gate decision(s)' });
+    expect(results[0].detail).toContain(`spec ${specTask.id}: approved by reviewer`);
+    expect(results[0].detail).toContain(`run ${runId}: accepted`);
+    expect((await store.get(specTask.id))?.status).toBe('ready');
+    expect((await store.get(runTask.id))?.status).toBe('done');
+    expect(changeSet.accepted).toEqual([runId]);
+  });
+
+  it('reports skipped and failed external gate decisions without bypassing validation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+    const store = new FileTaskStore(root);
+    const runStore = new FileRunStore(root);
+    const rt = new ForgeRuntime({ root, store, runStore, vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), validation: new MemoryValidation('fail'), gate: new DecisionGate({}) });
+    await rt.init('demo');
+    const specTask = await rt.createTask('external rejected spec', { complexity: 'medium' });
+    await rt.writeSpec(specTask.id, '# Spec');
+    const runTask = await rt.createTask('external invalid run');
+    const [runResult] = await rt.runTask(runTask.id);
+    const runId = runResult.run!;
+    rt.deps.gate = new DecisionGate({
+      [`task:${specTask.id}`]: { providerId: 'gate.memory', gateId: `task:${specTask.id}`, kind: 'spec-approval', status: 'rejected', taskId: specTask.id },
+      [`run:${runId}`]: { providerId: 'gate.memory', gateId: `run:${runId}`, kind: 'run-acceptance', status: 'approved', taskId: runTask.id, runId },
+    });
+
+    const results = await rt.sync();
+
+    expect(results[0].status).toBe('failed');
+    expect(results[0].detail).toContain(`spec ${specTask.id}: rejected`);
+    expect(results[0].detail).toContain(`run ${runId}: Validation failed`);
+    expect((await store.get(specTask.id))?.status).toBe('awaiting-approval');
+    expect((await store.get(runTask.id))?.status).toBe('reviewing');
   });
 
   it('summarizes pending human actions with runnable short-fragment commands', async () => {

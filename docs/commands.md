@@ -92,7 +92,15 @@ Options:
 - `--dry-run` — report intended work without changing state
 - `-m, --message <message>` — commit/sync message passed to providers
 
-Current Git sync tasks:
+When a gate provider is configured, sync first polls external gate decisions and applies approved decisions through the same runtime paths as manual commands:
+
+- approved spec decisions call the normal task approval path
+- approved run decisions call the normal run acceptance path, including validation gates and typed acceptance states (`accepted`, `empty`, `blocked`, `merge-conflict`)
+- pending, rejected, and canceled decisions are reported as skipped
+
+The gate sync result reports applied, skipped, and failed decisions. `--dry-run` reports decisions that would be applied without changing task or run state.
+
+Current Git sync tasks then run:
 
 1. Ensure the current directory is a Git repo.
 2. Commit local changes if the working tree is dirty.
