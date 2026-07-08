@@ -100,20 +100,23 @@ Runs a thin CLI loop around `ForgeRuntime.sweepWorkstream()`. Each sweep:
 
 1. Enqueues planned workstream items whose dependencies are done.
 2. Runs all ready tasks with bounded parallelism.
-3. Prints the same pending-human-actions summary as `forge status`.
+3. In `--yolo` mode only, generates placeholder specs, approves specs, and accepts succeeded runs so the daemon can continue past human gates.
+4. Prints the same pending-human-actions summary as `forge status`.
 
 Options:
 
 - `--once` — run one sweep and exit
 - `--interval <seconds>` — delay between sweeps (default: 60)
 - `--parallel <count>` / `-p <count>` — ready-task parallelism for each sweep (default: 2)
+- `--yolo` — bypass human gates during each sweep: generate a placeholder spec for `needs-spec` tasks, approve `awaiting-approval` specs, and accept succeeded `reviewing` runs after validation passes
 
 ```bash
 forge process --parallel 3
 forge process --once
+forge process --yolo --parallel 3
 ```
 
-The daemon never bypasses human gates: medium/large workstream items still stop at `needs-spec`, specs remain `awaiting-approval` until a human runs `forge task approve`, and completed runs remain `reviewing` until a human validates/reviews/accepts them. Press Ctrl-C to request graceful shutdown; Forge finishes the in-flight sweep, prints its summary, and exits before starting another sweep.
+By default, the daemon never bypasses human gates: medium/large workstream items still stop at `needs-spec`, specs remain `awaiting-approval` until a human runs `forge task approve`, and completed runs remain `reviewing` until a human validates/reviews/accepts them. `--yolo` is the explicit opt-in escape hatch for trusted backlog burn-downs; validation gates still run before acceptance, and failed validation remains blocked. Press Ctrl-C to request graceful shutdown; Forge finishes the in-flight sweep, prints its summary, and exits before starting another sweep.
 
 ## `forge workstream plan <prompt...>`
 

@@ -8,11 +8,13 @@ import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
 import { extractJsonBlock } from '../src/providers/planner-pi/index.js';
 import type { WorkstreamPlannerProvider, WorkstreamPlanRequest } from '../src/core/workstream.js';
-import type { AgentProvider, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
+import type { ChangeSetProvider } from '../src/core/changes.js';
+import type { AgentProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; async isRepo(){return true;} async init(){} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
 class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; async create(input:{task:Task}){ return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; async run(){ return { exitCode: 0, output: 'ok' }; } }
+class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
 
 class MemoryPlanner implements WorkstreamPlannerProvider {
   id = 'workstream-planner.memory';
@@ -35,7 +37,7 @@ class MemoryPlanner implements WorkstreamPlannerProvider {
 
 async function makeRuntime(planner?: WorkstreamPlannerProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-workstream-test-'));
-  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), workstream: new FileWorkstreamProvider(root), workstreamPlanner: planner });
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), workstream: new FileWorkstreamProvider(root), workstreamPlanner: planner });
   return { rt, root };
 }
 
@@ -153,6 +155,26 @@ describe('workstream backlog', () => {
     expect(await rt.listWorkstream()).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'blocked', status: 'planned', taskId: undefined }),
     ]));
+  });
+
+  it('sweeps in yolo mode by bypassing spec approval and accept gates', async () => {
+    const { rt, root } = await makeRuntime();
+    await importItems(rt, root, [
+      { id: 'small', title: 'Small yolo item', complexity: 'small' },
+      { id: 'medium', title: 'Medium yolo item', complexity: 'medium' },
+    ]);
+
+    const result = await rt.sweepWorkstream(undefined, { concurrency: 2, yolo: true });
+
+    expect(result.yolo.specced.map(task => task.title)).toEqual(['Medium yolo item']);
+    expect(result.yolo.approved.map(task => task.title)).toEqual(['Medium yolo item']);
+    expect(result.yolo.accepted).toHaveLength(2);
+    expect(result.yolo.errors).toEqual([]);
+    expect((await rt.deps.store.list()).map(task => [task.title, task.status])).toEqual(expect.arrayContaining([
+      ['Small yolo item', 'done'],
+      ['Medium yolo item', 'done'],
+    ]));
+    expect(result.status).toEqual([]);
   });
 
   it('extracts balanced JSON blocks from chatty planner output', () => {

@@ -1,18 +1,86 @@
 # Forge Handoff
 
+Last updated: 2026-07-08.
+
 ## Product ethos
 
 Forge is a provider-neutral orchestration layer for agentic software work. It should help a project go wide: many non-blocking tasks can be planned, isolated, executed, reviewed, validated, accepted, and synced without different agents trampling each other.
 
 Core principles:
 
-1. **Forge orchestrates; providers implement.** Core should not know GitHub, Podman, pi, Docker, memory servers, MCP, or future tools directly.
+1. **Forge orchestrates; providers implement.** Core must not know GitHub, Linear, Podman, pi, Docker, or future tools directly.
 2. **Provider boundaries first.** Add generic contracts in `src/core/`, then implementations under `src/providers/`.
-3. **Dogfood Forge.** New features should be built through `forge build ...`, using Podman isolation by default.
-4. **Everything is observable.** Runs, logs, statuses, leases, validation, and acceptance should be inspectable after the fact.
-5. **Specs/gates before risky work.** Medium/large tasks should stop for spec approval unless explicitly auto-approved.
+3. **Dogfood Forge.** New features should be built through `forge build ...` or workstream items run through the normal pipeline, using Podman isolation by default.
+4. **Everything is observable.** Runs, logs, statuses, leases, validation, and acceptance are inspectable after the fact; `forge status` lists every pending human action with a runnable command.
+5. **Specs/gates before risky work.** Medium/large tasks stop for spec approval unless explicitly auto-approved. The daemon never bypasses human gates.
 6. **Parallelism must be safe.** Discovery proposes scopes; leases coordinate execution; validation gates acceptance.
 7. **Docs are part of the implementation.** Any new command, provider, config, lifecycle state, or behavior must update docs and tests.
+
+## The intended workflow
+
+```bash
+forge workstream plan <goal>       # interview → dependency-ordered backlog items
+forge process                      # daemon: enqueue unblocked → run ready → report gates (Ctrl-C to stop)
+forge status                       # what's waiting on a human, with the exact command to run
+forge task approve '<fragment>'    # open spec gates
+forge runs review/validate/accept '<fragment>'   # close out completed runs
+forge sync -m "message"            # commit + push
+```
+
+All task/run commands resolve short unique title fragments — full ids are never required.
+
+## Configuration
+
+`.forge/config.toml` is the human-owned config (preferred over the generated `.forge/config.json`). Current contents:
+
+```toml
+[providers]
+isolation = "podman"
+validation = "shell"
+lease = "filesystem"
+workstream = "filesystem"
+workstreamPlanner = "pi"
+
+[validation]
+commands = ["npm ci", "npm test", "npm run build"]
+```
+
+### Switching the backlog to GitHub Issues (live-verified 2026-07-08)
+
+```toml
+[providers]
+workstream = "github"
+
+[github]
+owner = "cuken"
+repo = "forge"
+```
+
+- Auth: uses `GITHUB_TOKEN`/`GH_TOKEN` if set, otherwise falls back to `gh auth token` — an existing `gh auth login` keyring session needs no extra setup.
+- Backlog = open issues labelled `forge:workstream`. Complexity from `forge:trivial|small|medium|large` labels (default small); `forge:queued` + a "Forge task id" comment record queue state; a hidden issue-body metadata block round-trips ids/dependencies/taskId; hand-written `Depends on #N` / `Blocked by #N` phrasing works on plain issues.
+- Verify with `forge doctor` (token + repo config checks), then `forge workstream list`.
+- **Migration is manual**: switching providers does not move the existing `.forge/workstream.json` backlog. Migrate by importing the old items while the github provider is active (each becomes a labelled issue), or keep the local file until it drains.
+
+### Switching the backlog to Linear (implemented, NOT yet live-verified)
+
+```toml
+[providers]
+workstream = "linear"
+
+[linear]
+teamKey = "ENG"          # required
+project = "Roadmap"      # optional
+```
+
+- Requires `LINEAR_API_KEY` in the environment. Verify with `forge doctor`, then `forge workstream list`.
+- Issue identifiers (`ENG-123`) are item ids; `forge:*` labels map complexity/queued state; blocked-by relations map dependencies; task links cached in `.forge/linear-workstream-links.json`.
+- Expect first-contact wrinkles: the GraphQL shapes are mock-verified only.
+
+### Other config
+
+- Isolation: `FORGE_ISOLATION=host|docker|podman` overrides `[providers] isolation`. Podman image: `localhost/forge-agent-pi:latest`, built with `npm run podman:image`.
+- Leases: `FORGE_LEASE_STALE_AFTER_MS` tunes stale-lease cleanup (default 1h).
+- The TOML parser is minimal (sections + `key = "value"` lines), not a full TOML implementation.
 
 ## Current project structure
 
@@ -21,292 +89,69 @@ AGENTS.md                         agent instructions and mandatory rules
 HANDOFF.md                        this handoff
 README.md                         user-facing overview
 .forge/
+  config.toml                     human config (see Configuration above)
   config.json                     generated config
-  config.toml                     human config; currently selects podman, shell validation, filesystem leases
   context/                        project context
-  tasks/                          ignored local task records
-  specs/                          ignored local specs
-  runs/                           ignored durable run records
-  logs/                           ignored run logs
+  tasks/ specs/ runs/ logs/       ignored local state
   leases/                         ignored filesystem lease files
+  workstream.json                 ignored local backlog (filesystem provider)
+  *-workstream-links.json         ignored tracker task-link caches
 containers/podman/Containerfile   Forge agent image with node/git/pi
-docs/
-  architecture.md                 core concepts and boundaries
-  providers.md                    provider authoring guide
-  commands.md                     CLI behavior
-  agent-guide.md                  agent workflow guidance
-  documentation-policy.md         mandatory doc-update policy
-src/
-  cli.ts                          CLI composition and provider selection
-  core/                           provider-neutral contracts/runtime
-  providers/                      concrete provider implementations
-test/                             Vitest coverage
+docs/                             architecture, providers, commands, agent guide, doc policy
+src/cli.ts                        CLI composition and provider selection
+src/core/                         provider-neutral contracts/runtime
+src/providers/                    concrete provider implementations
+test/                             Vitest coverage (62 tests as of last sync)
 ```
 
-## Core contracts/features currently present
-
-### Task/build/spec flow
-
-- `forge build <request...>` converts natural language into task/spec/run flow through `BuildPlannerProvider`.
-- `build-planner.heuristic` estimates complexity and drafts specs.
-- Medium/large tasks require spec unless `--auto-approve`.
-
-### Config
-
-- `.forge/config.toml` preferred over generated JSON.
-- Current config:
-
-```toml
-[providers]
-isolation = "podman"
-validation = "shell"
-lease = "filesystem"
-
-[validation]
-commands = ["npm ci", "npm test", "npm run build"]
-```
-
-### Isolation
-
-- `IsolationProvider` prepares an execution environment.
-- Current providers:
-  - `isolation.host`
-  - `isolation.docker`
-  - `isolation.podman`
-- Podman provider is the dogfood path:
-  - image: `localhost/forge-agent-pi:latest`
-  - build with `npm run podman:image`
-  - copies host pi config into container
-  - runs readiness check
-  - executes agent commands via `podman exec`
-
-### Runs/logging
-
-- `RunStore` persists records under `.forge/runs/`.
-- Logs under `.forge/logs/`.
-- Commands:
-  - `forge runs list`
-  - `forge runs show <id-or-fragment>`
-  - `forge runs log <id>`
-
-### Review/accept
-
-- `ChangeSetProvider` reviews/accepts completed run output.
-- Current provider: `change-set.git-worktree`.
-- Commands:
-  - `forge runs review <id-or-fragment>`
-  - `forge runs accept <id-or-fragment> [--dry-run] [-m message]`
-
-### Validation
-
-- `ValidationProvider` gates acceptance.
-- Current provider: `validation.shell`.
-- Configured commands: `npm ci`, `npm test`, `npm run build`.
-- Command:
-  - `forge runs validate <id-or-fragment>`
-
-### Discovery
-
-- `TaskDiscoveryProvider` proposes task resource scopes.
-- Current provider: `task-discovery.heuristic`.
-- Stores discovery metadata on task.
-- `forge task list` shows `scopes=` when present.
-
-### Leases
-
-- `LeaseProvider` coordinates discovered scopes.
-- Current providers:
-  - `lease.memory` for one process
-  - `lease.filesystem` for cross-process coordination under `.forge/leases`
-- Commands:
-  - `forge lease status`
-  - `forge lease cleanup`
-- `forge task run-ready --parallel N` acquires/retries/releases leases around task runs.
-
-### Workstreams (added 2026-07-07)
-
-- `WorkstreamProvider` stores a provider-neutral backlog of planned roadmap items (`id`, `title`, `description`, `dependencies`, `complexity`, `status planned|queued`, `taskId` link). Contract is `import`/`list`/`update`; the runtime owns enqueue semantics.
-- `WorkstreamPlannerProvider` turns a natural-language goal into workstream drafts; the `ask` callback in its contract is a generic clarification channel (CLI relays questions as terminal prompts; other hosts can use other surfaces).
-- Current providers:
-  - `workstream.filesystem` — backlog state in `.forge/workstream.json`; re-import merges by id and preserves queued state
-  - `workstream.linear` — Linear GraphQL backend (`[providers] workstream = "linear"`, `[linear] teamKey = "ENG"`, `LINEAR_API_KEY` env); issue identifiers are item ids, `forge:*` labels map complexity/queued state, blocked-by relations map dependencies, task links cached in `.forge/linear-workstream-links.json`. Not yet smoke-tested against a live workspace.
-  - `workstream.github` — GitHub Issues REST backend (`[providers] workstream = "github"`, `[github] owner`/`repo`; token from `GITHUB_TOKEN`/`GH_TOKEN` or `gh auth token` fallback). Issues labelled `forge:workstream` are the backlog; `forge:*` labels map complexity/queued state, a hidden issue-body metadata block round-trips ids/dependencies/taskId, and hand-written `Depends on #N` / `Blocked by #N` phrasing is honored on issues without metadata. Smoke-tested live against cuken/forge (2026-07-08): create, list, queue label + comment all verified. Note: GitHub's issues list endpoint has brief read-after-write lag, so an import's returned list can momentarily miss a just-created issue.
-  - `workstream-planner.pi` — asks pi for clarifying questions, then for a JSON plan; lenient JSON extraction from chatty output
-- Commands:
-  - `forge workstream plan <prompt...> [--no-questions]`
-  - `forge workstream import <file.json> [--replace]`
-  - `forge workstream list`
-  - `forge workstream enqueue [ids...]`
-  - `forge status` — every pending human action with a runnable command
-  - `forge process [--once] [--interval <s>] [-p <n>]` — daemon sweep loop: enqueue unblocked → run ready → report human gates; never auto-approves or auto-accepts
-- Enqueue is a safe repeated sweep: it only queues planned items whose dependencies' tasks are `done`, marks items queued with their task id (no duplicates), and explicit ids force past gating. Tasks flow through the normal createTask path, so discovery scopes and spec gates apply.
-- Future implementations behind the same contracts: Linear, GitHub Issues, Jira backlogs; other planner agents.
-
-### Sync
-
-- `SyncProvider` reconciles local state.
-- Current Git provider commits local changes and pushes to `upstream`/`origin`.
-- Command:
-  - `forge sync [-m message] [--dry-run]`
-
-## Working commands
-
-```bash
-npm test
-npm run build
-npm run podman:image
-forge doctor
-forge isolation status
-forge status
-forge build <request...> --auto-approve
-forge task list
-forge task run-ready --parallel 2
-forge runs list
-forge runs show <fragment>
-forge runs review <fragment>
-forge runs validate <fragment>
-forge runs accept <fragment> --dry-run
-forge lease status
-forge workstream plan <prompt...> --no-questions
-forge workstream enqueue
-forge sync -m "message"
-```
-
-## Suggested next best features
-
-### 1. Make `forge runs accept` truly close the loop
-
-Current accept exists, but it has not been heavily exercised as the default integration path. Improve/verify:
-
-- accept a completed run from worktree to main
-- record acceptance metadata reliably
-- optionally run `forge sync` after accept or print a precise next step
-- handle merge conflicts cleanly through provider result states instead of raw errors
-- add tests around dirty main checkout, empty changes, merge conflict, and successful accept
-
-Suggested build:
-
-```bash
-forge build harden forge runs accept so completed worktree runs merge safely with conflict reporting acceptance metadata and clear post accept sync guidance --auto-approve
-```
-
-### 2. Lease conflict semantics beyond exact keys
-
-Filesystem leases currently lock per normalized scope key. We need richer conflict rules:
-
-- `unknown:*` conflicts with all
-- path prefix conflicts, e.g. `src/core/` vs `src/core/forge.ts`
-- provider/config/docs/test scope families conflict sensibly
-- expose conflict reason in logs/status
-
-This should remain provider-owned: improve `lease.filesystem`, not core.
-
-Suggested build:
-
-```bash
-forge build improve filesystem lease conflict detection for wildcard and path prefix resource scopes with clear conflict reasons --auto-approve
-```
-
-### 3. Discovery refinement and explicit user scopes
-
-Discovery is heuristic-only. Add explicit override support:
-
-```bash
-forge task create "..." --scope src/core/forge.ts --scope docs/
-forge build "..." --scope src/core/
-```
-
-Rules:
-
-- explicit scopes are stored on task
-- discovery can still add rationale but must not override explicit scopes
-- task list/review should distinguish explicit vs discovered scopes
-
-Suggested build:
-
-```bash
-forge build add explicit task resource scopes to build and task create commands while preserving provider discovery metadata --auto-approve
-```
-
-### 4. Run lifecycle cleanup
-
-Worktrees, containers, runs, logs, and leases will accumulate. Add cleanup/status:
-
-```bash
-forge workspaces list
-forge workspaces cleanup --done
-forge runs cleanup --older-than 7d
-```
-
-Provider-neutral direction:
-
-- `WorkspaceProvider` should expose optional list/cleanup hooks
-- Git worktree provider implements them
-
-Suggested build:
-
-```bash
-forge build add provider neutral workspace listing and cleanup commands for completed forge task worktrees --auto-approve
-```
-
-### 5. Better scheduler state and deferrals — DONE (2026-07-07)
-
-Implemented directly in core:
-
-- `forge task run-ready --lease-wait <seconds>` bounds lease waiting (default 15 minutes) with exponential backoff (250ms–5s) and log throttling.
-- On timeout the task returns to `ready`, the run record is marked `deferred` (new `RunRecord` status), and the result includes `deferred: true` — never `failed`.
-- Providers signal contention with `LeaseConflictError` (in `src/core/lease.ts`, carries `scopeKey`/`ownerTaskId`); any other acquire error fails the task immediately instead of retrying.
-- `lease.filesystem` acquires scopes in sorted key order to avoid cross-process deadlock on overlapping scope sets, and only maps `EEXIST` to a conflict.
-- `leaseScopeKey()` normalizes values (trim, strip trailing slashes) so `docs` and `docs/` contend.
-
-Remaining follow-up: surface the conflict owner in `run-ready` JSON results (currently only in logs/error message).
-
-### 6. Provider package/plugin loading
-
-Currently providers are wired in `src/cli.ts`. Long term, users should add providers as packages/modules.
-
-First slice:
-
-- config-driven built-in provider selection is okay
-- document an internal registry
-- move CLI wiring toward a provider registry abstraction
-
-Suggested build:
-
-```bash
-forge build introduce provider registry abstraction for builtin providers as first step toward package loaded forge providers --auto-approve
-```
-
-### 7. Agent survey discovery provider
-
-Add a discovery provider that can ask an agent to survey the repo and propose scopes, without Forge knowing how it works.
-
-Provider-owned details:
-
-- may call pi
-- may call MCP/memory
-- may inspect repo map
-- returns generic `TaskDiscoveryMetadata`
-
-Suggested build:
-
-```bash
-forge build add agent survey task discovery provider that proposes resource scopes through the generic TaskDiscoveryProvider contract --auto-approve
-```
-
-## Important risks / known rough edges
-
-- Containerized worktrees may have `.git` pointer issues inside Podman. The agent can edit files, but Git commands inside container may fail because worktree metadata points to host paths. Providers should not assume Git works inside the container unless the isolation provider deliberately supplies it.
-- `lease.memory` is process-local only. Use `lease.filesystem` for real coordination.
-- `forge runs accept` should be hardened before becoming the only integration path.
-- Config parser is minimal TOML, not a full TOML parser.
-- Provider selection is still mostly hardcoded in `src/cli.ts`; registry/package loading is future work.
-- Many local `.forge/tasks`, `.forge/specs`, `.forge/runs`, `.forge/logs`, and `.forge/leases` are ignored and not portable by design.
-
-## Suggested default next command
-
-If continuing immediately, I recommend hardening accept first:
-
-```bash
-forge build harden forge runs accept so completed worktree runs merge safely with conflict reporting acceptance metadata and clear post accept sync guidance --auto-approve
-```
+## Capabilities and providers
+
+| Capability | Contract | Providers | Commands |
+|---|---|---|---|
+| Task store / runs | `TaskStore`, `RunStore` | `store.filesystem` | `forge task list`, `forge runs list/show/log` |
+| Build planning | `BuildPlannerProvider` | `build-planner.heuristic` | `forge build <request...> [--auto-approve]` |
+| Workspaces | `WorkspaceProvider` | `workspace.git-worktree` | (used by run pipeline) |
+| Isolation | `IsolationProvider` | host, docker, podman | `forge isolation status` |
+| Agent | `AgentProvider` | `agent.pi` | (used by run pipeline) |
+| Discovery | `TaskDiscoveryProvider` | `task-discovery.heuristic` | scopes shown in `forge task list` |
+| Leases | `LeaseProvider` | `lease.memory`, `lease.filesystem` | `forge lease status/cleanup` |
+| Change sets | `ChangeSetProvider` | `change-set.git-worktree` | `forge runs review/accept` |
+| Validation | `ValidationProvider` | `validation.shell` | `forge runs validate` |
+| Workstream | `WorkstreamProvider` | filesystem, github (live-verified), linear (mock-verified) | `forge workstream import/list/enqueue` |
+| Planning | `WorkstreamPlannerProvider` | `workstream-planner.pi` | `forge workstream plan` |
+| Sync | `SyncProvider` | `vcs.git` | `forge sync` |
+
+Cross-cutting commands: `forge status` (pending human actions), `forge process` (daemon sweep loop), `forge doctor` (provider health checks).
+
+Key semantics worth knowing:
+
+- **Enqueue** is a safe repeated sweep: only planned items whose dependencies' linked tasks are `done` are queued; queued items are never duplicated; explicit ids force past gating. Enqueued tasks flow through `createTask`, so discovery scopes and spec gates apply.
+- **Import merges by item id** (queued state preserved, absent items kept); `--replace` rewrites the backlog. Tracker-backed providers treat `--replace` as a no-op.
+- **Leases**: providers throw `LeaseConflictError` for contention; the runtime retries with backoff up to `--lease-wait` (default 15 min) then defers the task back to `ready` (run recorded as `deferred`, never `failed`). Any other lease error fails the task immediately. `lease.filesystem` acquires scopes in sorted order to prevent cross-process deadlock.
+- **The daemon (`forge process`)** never auto-approves specs or auto-accepts runs. Approve/accept out-of-band and the next sweep continues the roadmap.
+
+## Pending state at handoff (local backlog)
+
+- Two completed accept-hardening runs awaiting review/validate/accept: `forge runs review 'report'` (dirty-checkout-as-blocked) and `forge runs review 'return'` (empty-change-set result). Their worktrees hold unintegrated accept-contract changes; integrate these before the accept-normalization item below.
+- Tasks at `needs-spec`: merge-conflict accept result, accept doctor checks, notification capability, human-gate capability.
+- Blocked workstream items: the notification chain, accept CLI normalization, GitHub Issues gate provider → gate decisions on sync.
+- Run `forge status` for the live view.
+
+## Suggested next work (in order)
+
+1. **Integrate the two pending accept runs, then `normalize-accept-cli-output-for-provider-results`** — completes typed accept outcomes (`accepted | empty | blocked | conflict`). Design decisions already made: dirty checkout is a `blocked` reason string, not a status; empty is success-with-audit-trail on human accept but stop-and-review in automated flows; conflict is its own status.
+2. **Human gate capability (`define-human-gate-capability`, already enqueued at needs-spec)** — publish spec approvals and run acceptances to an external system of record and read decisions back on `forge sync`. GitHub Issues gate provider follows; this is the path to approving work from the tracker instead of the terminal.
+3. **Workstream completion feedback** — when accept marks a task `done`, update the linked workstream item so tracker-backed backlogs (github/linear) reflect roadmap progress without manual sweeps.
+4. **Run/workspace lifecycle cleanup** — worktrees, branches, runs, and logs accumulate fast under daemon operation (`forge workspaces cleanup --done`, `forge runs cleanup --older-than 7d`; optional hooks on `WorkspaceProvider`).
+5. **Lease conflict semantics beyond exact keys** — `unknown:*` should conflict with everything, path-prefix conflicts (`src/core` vs `src/core/forge.ts`); provider-owned in `lease.filesystem`. Also let workstream items carry explicit scopes so planners can declare them.
+
+Later: provider registry/plugin loading (hardcoded wiring in `src/cli.ts` is fine while all providers are in-repo), agent-survey discovery provider, Linear live verification.
+
+## Risks / known rough edges
+
+- Git commands can fail inside Podman worktrees (worktree `.git` metadata points at host paths). Agents can edit files; providers must not assume in-container git works.
+- `forge runs accept` is not yet hardened as the sole integration path; most historical integration in this repo was done via manual `git apply` + `forge sync`, with tasks closed by editing `.forge/tasks/*.json` afterward.
+- GitHub's issues list endpoint has brief read-after-write lag; an import's returned list can momentarily miss a just-created issue. Harmless at daemon sweep cadence.
+- `workstream.linear` has never touched a live workspace.
+- Task ids are `<epoch-ms>-<slug>`; two tasks created in the same millisecond collide only if their slugs also match (has not happened, but the id scheme is weak).
+- Local `.forge/` state (tasks, specs, runs, logs, leases, workstream, link caches) is ignored and not portable by design — the tracker-backed workstream providers are the portability story.

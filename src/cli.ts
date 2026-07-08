@@ -119,7 +119,7 @@ lease.command('cleanup').description('Remove stale resource leases').action(asyn
   console.log(`removed ${removed} stale lease(s)`);
 });
 
-program.command('process').description('Continuously sweep the workstream: enqueue unblocked items, run ready tasks, then print pending human actions').option('--once', 'run a single sweep and exit').option('--interval <seconds>', 'seconds between sweeps', v => Number(v), 60).option('-p, --parallel <count>', 'maximum ready tasks to run concurrently during each sweep', v => Number(v), 2).action(async opts => {
+program.command('process').description('Continuously sweep the workstream: enqueue unblocked items, run ready tasks, then print pending human actions').option('--once', 'run a single sweep and exit').option('--interval <seconds>', 'seconds between sweeps', v => Number(v), 60).option('-p, --parallel <count>', 'maximum ready tasks to run concurrently during each sweep', v => Number(v), 2).option('--yolo', 'bypass human spec approval and run acceptance gates').action(async opts => {
   const rt = runtime();
   let stopping = false;
   let wakeSleep: (() => void) | undefined;
@@ -131,8 +131,10 @@ program.command('process').description('Continuously sweep the workstream: enque
   }).finally(() => { wakeSleep = undefined; });
   try {
     do {
-      const result = await rt.sweepWorkstream(chunk => process.stdout.write(chunk), { concurrency: opts.parallel });
+      const result = await rt.sweepWorkstream(chunk => process.stdout.write(chunk), { concurrency: opts.parallel, yolo: opts.yolo });
       console.log(`sweep: enqueued ${result.enqueued.length}, ran ${result.runResults.length}`);
+      if (opts.yolo) console.log(`yolo: specced ${result.yolo.specced.length}, approved ${result.yolo.approved.length}, accepted ${result.yolo.accepted.length}, errors ${result.yolo.errors.length}`);
+      for (const error of result.yolo.errors) console.log(`yolo error: ${error}`);
       if (!result.status.length) console.log('no pending human actions');
       for (const line of result.status) console.log(line);
       if (opts.once || stopping) break;

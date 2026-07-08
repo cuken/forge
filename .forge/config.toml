@@ -2,8 +2,12 @@
 isolation = "podman"
 validation = "shell"
 lease = "filesystem"
-workstream = "filesystem"
+workstream = "github"
 workstreamPlanner = "pi"
+
+[github]
+owner = "cuken"
+repo = "forge"
 
 [validation]
 commands = ["npm ci", "npm test", "npm run build"]
