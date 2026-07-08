@@ -14,14 +14,22 @@ export class FileWorkstreamProvider implements WorkstreamProvider {
   constructor(private root = process.cwd()) {}
   private path() { return join(this.root, '.forge', 'workstream.json'); }
 
-  async import(input: { path?: string; items?: unknown[] } = {}): Promise<WorkstreamItem[]> {
+  async import(input: { path?: string; items?: unknown[]; replace?: boolean } = {}): Promise<WorkstreamItem[]> {
     const source = input.items ?? (input.path ? await readJson<unknown>(input.path) : await this.readDefaultOrEmpty());
-    const existing = new Map(this.normalize(await this.readDefaultOrEmpty()).map(item => [item.id, item]));
+    const existing = this.normalize(await this.readDefaultOrEmpty());
+    const existingById = new Map(existing.map(item => [item.id, item]));
     // Re-importing an edited roadmap must not forget which items were already queued.
-    const items = this.normalize(source).map(item => {
-      const previous = existing.get(item.id);
+    const incoming = this.normalize(source).map(item => {
+      const previous = existingById.get(item.id);
       return previous?.status === 'queued' ? { ...item, status: previous.status, taskId: previous.taskId } : item;
     });
+    // Merge by default so importing one roadmap never silently drops another; the whole
+    // backlog is only rewritten when the caller explicitly asks to replace it.
+    const incomingById = new Map(incoming.map(item => [item.id, item]));
+    const items = input.replace ? incoming : [
+      ...existing.map(item => incomingById.get(item.id) ?? item),
+      ...incoming.filter(item => !existingById.has(item.id)),
+    ];
     await mkdir(join(this.root, '.forge'), { recursive: true });
     await writeJson(this.path(), items);
     return items;

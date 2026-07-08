@@ -119,9 +119,9 @@ workstream.command('plan <prompt...>').description('Define a workstream with the
     rl?.close();
   }
 });
-workstream.command('import [path]').description('Import roadmap workstream items from a JSON file into the configured provider').action(async path => {
-  const items = await runtime().importWorkstream(path);
-  console.log(`imported ${items.length} workstream item(s)`);
+workstream.command('import [path]').description('Merge roadmap workstream items from a JSON file into the configured provider').option('--replace', 'replace the entire backlog instead of merging by item id').action(async (path, opts) => {
+  const items = await runtime().importWorkstream(path, { replace: opts.replace });
+  console.log(`imported ${items.length} workstream item(s)${opts.replace ? ' (replaced backlog)' : ''}`);
 });
 workstream.command('list').description('List imported workstream backlog items').action(async () => {
   for (const item of await runtime().listWorkstream()) console.log(`${item.id}\t${item.status}\t${item.complexity}\tdeps=${item.dependencies.join(',') || '-'}\t${item.title}${item.taskId ? `\ttask=${item.taskId}` : ''}`);

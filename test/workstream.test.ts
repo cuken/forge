@@ -131,6 +131,18 @@ describe('workstream backlog', () => {
     expect(extractJsonBlock('no json here', '{')).toBeNull();
   });
 
+  it('merges separate roadmap imports without dropping existing items', async () => {
+    const { rt, root } = await makeRuntime();
+    await importItems(rt, root, [{ id: 'first-plan', title: 'First plan item' }]);
+
+    const merged = await importItems(rt, root, [{ id: 'second-plan', title: 'Second plan item' }]);
+    expect(merged.map(item => item.id)).toEqual(['first-plan', 'second-plan']);
+
+    const source = join(root, 'replace.json');
+    await writeFile(source, JSON.stringify([{ id: 'only', title: 'Only item' }]));
+    await expect(rt.importWorkstream(source, { replace: true })).resolves.toHaveLength(1);
+  });
+
   it('preserves queued state when an edited roadmap is re-imported', async () => {
     const { rt, root } = await makeRuntime();
     await importItems(rt, root, [{ id: 'keep', title: 'Keep me' }]);

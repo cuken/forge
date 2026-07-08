@@ -12,7 +12,7 @@ export interface WorkstreamItem {
 
 export interface WorkstreamProvider extends ForgeProvider {
   kind: 'workstream';
-  import(input: { path?: string; items?: unknown[] }): Promise<WorkstreamItem[]>;
+  import(input: { path?: string; items?: unknown[]; replace?: boolean }): Promise<WorkstreamItem[]>;
   list(): Promise<WorkstreamItem[]>;
   update(id: string, patch: Partial<Pick<WorkstreamItem, 'status' | 'taskId'>>): Promise<WorkstreamItem>;
 }

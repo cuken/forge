@@ -96,8 +96,8 @@ export class ForgeRuntime {
     return provider;
   }
 
-  async importWorkstream(path?: string): Promise<WorkstreamItem[]> {
-    return this.workstreamProvider().import({ path });
+  async importWorkstream(path?: string, options: { replace?: boolean } = {}): Promise<WorkstreamItem[]> {
+    return this.workstreamProvider().import({ path, replace: options.replace });
   }
 
   async planWorkstream(input: { prompt: string; ask?: (question: string) => Promise<string> }): Promise<{ plan: WorkstreamPlan; added: WorkstreamItem[] }> {
