@@ -86,6 +86,12 @@ export class MyAgentProvider implements AgentProvider, DoctorProvider {
 
 Initial implementation: `build-planner.heuristic`. Future implementations can survey the repo with code indexes, query memory/context providers, or spawn agents before estimating complexity.
 
+## Spec generation
+
+`SpecProvider` lets Forge create task specs without baking a particular agent or template into core. The contract is `generateSpec({ task, context }) -> { providerId, body }`; runtime writes the returned Markdown with the same `writeSpec` path used for human-authored specs, so approval gates remain provider-neutral.
+
+The built-in `spec.pi` provider runs the configured pi command (`[pi] command`/`args`) and asks it for a concise Markdown spec with goals, boundaries, provider-boundary design notes, implementation steps, tests/docs, and acceptance criteria. Select it with `[providers] spec = "pi"`; CLI wiring defaults to pi when no spec provider is configured so `forge task spec --generate <task>` and `forge process --yolo` can create meaningful specs for workstream items.
+
 ## Task discovery
 
 `TaskDiscoveryProvider` lets providers annotate newly-created tasks with metadata about likely resource scopes without coupling Forge core to a code host, tracker, or index. The metadata is stored on the task as `discovery`, with the provider id, discovery timestamp, and `resourceScopes` entries such as `path`, `provider`, `config`, `docs`, `tests`, or `unknown`.
@@ -156,6 +162,7 @@ Future implementations can deliver the same neutral events through any channel o
 - `src/providers/workstream-linear` implements `WorkstreamProvider` against Linear GraphQL, including labels, issue relations, comments, link-cache persistence, and doctor checks.
 - `src/providers/workstream-github` implements `WorkstreamProvider` against GitHub Issues, including labels, issue-body metadata, comments, link-cache persistence, and doctor checks.
 - `src/providers/planner-pi` implements `WorkstreamPlannerProvider` by interviewing through pi and emitting dependency-ordered workstream drafts.
+- `src/providers/spec-pi` implements `SpecProvider` by asking pi to draft Markdown specs for gated tasks.
 - `src/providers/notification-console` implements `NotificationProvider` by writing run lifecycle notifications to the configured console stream.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.

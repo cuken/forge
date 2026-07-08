@@ -112,7 +112,7 @@ Runs a thin CLI loop around `ForgeRuntime.sweepWorkstream()`. Each sweep:
 
 1. Enqueues planned workstream items whose dependencies are done.
 2. Runs all ready tasks with bounded parallelism.
-3. In `--yolo` mode only, generates placeholder specs, approves specs, and accepts succeeded runs so the daemon can continue past human gates.
+3. In `--yolo` mode only, asks the configured spec provider to generate specs, approves specs, and accepts succeeded runs so the daemon can continue past human gates.
 4. Prints the same pending-human-actions summary as `forge status`.
 
 Options:
@@ -120,7 +120,7 @@ Options:
 - `--once` — run one sweep and exit
 - `--interval <seconds>` — delay between sweeps (default: 60)
 - `--parallel <count>` / `-p <count>` — ready-task parallelism for each sweep (default: 2)
-- `--yolo` — bypass human gates during each sweep: generate a placeholder spec for `needs-spec` tasks, approve `awaiting-approval` specs, and accept succeeded `reviewing` runs after validation passes
+- `--yolo` — bypass human gates during each sweep: generate specs for `needs-spec` tasks with the configured `SpecProvider`, approve `awaiting-approval` specs, and accept succeeded `reviewing` runs after validation passes
 
 ```bash
 forge process --parallel 3
@@ -202,9 +202,15 @@ Complexity policy:
 
 Lists local tasks with ID, status, complexity, title, and discovered resource scopes when present.
 
-## `forge task spec <id> <body>`
+## `forge task spec <id> [body]`
 
-Writes `.forge/specs/<id>.md`, attaches it to the task, and moves the task to `awaiting-approval`.
+Writes `.forge/specs/<id>.md`, attaches it to the task, and moves the task to `awaiting-approval`. Pass `--generate` to ask the configured `SpecProvider` to create the Markdown spec instead of supplying a body:
+
+```bash
+forge task spec --generate 'release records'
+```
+
+The built-in provider is `spec.pi`, selected with `[providers] spec = "pi"` (the default in CLI wiring). It uses the configured `[pi] command` and `args`.
 
 ## `forge approve [pattern]`
 

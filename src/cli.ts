@@ -23,6 +23,7 @@ import { FileWorkstreamProvider } from './providers/workstream-filesystem/index.
 import { LinearWorkstreamProvider } from './providers/workstream-linear/index.js';
 import { GitHubIssuesWorkstreamProvider } from './providers/workstream-github/index.js';
 import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
+import { PiSpecProvider } from './providers/spec-pi/index.js';
 import { ConsoleNotificationProvider, type ConsoleNotificationChannel } from './providers/notification-console/index.js';
 import { createInterface } from 'node:readline/promises';
 
@@ -97,6 +98,8 @@ function runtime() {
   if (requestedWorkstream && !['filesystem', 'workstream.filesystem', 'linear', 'workstream.linear', 'github', 'workstream.github'].includes(requestedWorkstream)) throw new Error(`Unknown workstream provider '${requestedWorkstream}'. Expected filesystem, linear, github, workstream.filesystem, workstream.linear, or workstream.github.`);
   const requestedPlanner = config?.providers?.workstreamPlanner;
   if (requestedPlanner && requestedPlanner !== 'pi' && requestedPlanner !== 'workstream-planner.pi') throw new Error(`Unknown workstream planner provider '${requestedPlanner}'. Expected pi or workstream-planner.pi.`);
+  const requestedSpec = config?.providers?.spec ?? 'pi';
+  if (requestedSpec && requestedSpec !== 'pi' && requestedSpec !== 'spec.pi') throw new Error(`Unknown spec provider '${requestedSpec}'. Expected pi or spec.pi.`);
   const staleAfterMs = process.env.FORGE_LEASE_STALE_AFTER_MS ? Number(process.env.FORGE_LEASE_STALE_AFTER_MS) : undefined;
   const lease = requestedLease === 'filesystem' || requestedLease === 'lease.filesystem' ? new FileLeaseProvider(process.cwd(), staleAfterMs) : new MemoryLeaseProvider();
   const workstream = requestedWorkstream === 'linear' || requestedWorkstream === 'workstream.linear'
@@ -104,7 +107,7 @@ function runtime() {
     : requestedWorkstream === 'github' || requestedWorkstream === 'workstream.github'
       ? new GitHubIssuesWorkstreamProvider(config?.github ?? {})
       : new FileWorkstreamProvider();
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), notification: notificationProvider() });
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), spec: requestedSpec ? new PiSpecProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) : undefined, notification: notificationProvider() });
 }
 
 const program = new Command();
@@ -238,7 +241,7 @@ task.command('create <title>').option('-d, --description <text>').option('-c, --
   console.log(`${t.id} ${t.status} ${t.title}`);
 });
 task.command('list').action(async () => { for (const t of await runtime().deps.store.list()) console.log(`${t.id}\t${t.status}\t${t.complexity}\t${t.title}${t.discovery?.resourceScopes.length ? `\tscopes=${t.discovery.resourceScopes.map(scope => `${scope.kind}:${scope.value}`).join(',')}` : ''}`); });
-task.command('spec <id> <body>').action(async (id, body) => { const t = await runtime().writeSpec(id, body); console.log(`${t.id} ${t.status} ${t.spec?.path}`); });
+task.command('spec <id> [body]').option('--generate', 'generate the spec with the configured spec provider').action(async (id, body, opts) => { const t = opts.generate ? await runtime().generateSpec(id) : await runtime().writeSpec(id, body ?? ''); console.log(`${t.id} ${t.status} ${t.spec?.path}`); });
 task.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
 task.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern, chunk => process.stdout.write(chunk)), null, 2)); });
 task.command('run-ready').option('-p, --parallel <count>', 'maximum ready tasks to run concurrently', v => Number(v), 1).option('--lease-wait <seconds>', 'maximum seconds to wait for resource scope leases before deferring a task', v => Number(v)).action(async opts => { console.log(JSON.stringify(await runtime().runReady(undefined, chunk => process.stdout.write(chunk), { concurrency: opts.parallel, leaseWaitMs: Number.isFinite(opts.leaseWait) ? opts.leaseWait * 1000 : undefined }), null, 2)); });

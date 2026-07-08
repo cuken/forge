@@ -4,6 +4,7 @@ validation = "shell"
 lease = "filesystem"
 workstream = "github"
 workstreamPlanner = "pi"
+spec = "pi"
 notification = "console"
 
 [github]

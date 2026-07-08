@@ -10,6 +10,7 @@ import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
 import type { NotificationProvider, RunNotificationInput } from '../src/core/notification.js';
+import type { SpecProvider } from '../src/core/spec.js';
 import { LeaseConflictError, type LeaseHandle, type LeaseProvider } from '../src/core/lease.js';
 import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
@@ -23,6 +24,7 @@ class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kin
 class MemoryValidation implements ValidationProvider, ForgeProvider { id='validation.memory'; kind='validation'; constructor(private status:'pass'|'fail'){} async validate(){ return [{ id: 'validation.memory:gate', status: this.status, message: this.status === 'pass' ? 'ok' : 'not ok' }]; } }
 class MemoryDiscovery implements TaskDiscoveryProvider, ForgeProvider { id='task-discovery.memory'; kind='task-discovery'; async discoverTask(input:{title:string}){ return { providerId: this.id, discoveredAt: '2026-01-01T00:00:00.000Z', resourceScopes: [{ kind: 'path' as const, value: `src/${input.title}.ts`, confidence: 'high' as const, reason: 'test scope' }] }; } }
 class MemoryLease implements LeaseProvider { id='lease.memory'; kind='lease' as const; acquired:string[]=[]; released:string[]=[]; async acquire(input:{task:Task}){ this.acquired.push(input.task.id); return { providerId: this.id, id: `lease-${input.task.id}`, taskId: input.task.id, scopes: input.task.discovery?.resourceScopes ?? [], acquiredAt: '2026-01-01T00:00:00.000Z' }; } async release(lease:LeaseHandle){ this.released.push(lease.taskId); } }
+class MemorySpec implements SpecProvider, ForgeProvider { id='spec.memory'; kind='spec' as const; async generateSpec(input:{task:Task}){ return { providerId: this.id, body: `# Generated spec\n\n${input.task.title}` }; } }
 class MemoryNotification implements NotificationProvider, ForgeProvider { id='notification.memory'; kind='notification'; events:RunNotificationInput[]=[]; async notifyRun(input:RunNotificationInput){ this.events.push(input); } }
 class BrokenNotification implements NotificationProvider, ForgeProvider { id='notification.broken'; kind='notification'; async notifyRun(){ throw new Error('notification backend unreachable'); } }
 
@@ -97,6 +99,18 @@ describe('Forge vertical slice', () => {
     const medium = await rt.createTask('risky thing', { complexity: 'medium' });
     expect(small.status).toBe('ready');
     expect(medium.status).toBe('needs-spec');
+  });
+
+  it('generates task specs through the configured spec provider', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), spec: new MemorySpec() });
+    await rt.init('demo');
+    const task = await rt.createTask('provider generated spec', { complexity: 'medium' });
+
+    const withSpec = await rt.generateSpec(task.id);
+
+    expect(withSpec.status).toBe('awaiting-approval');
+    await expect(readFile(join(root, withSpec.spec!.path), 'utf8')).resolves.toContain('provider generated spec');
   });
 
   it('requires spec approval before gated task can run', async () => {
