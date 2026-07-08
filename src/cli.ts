@@ -15,6 +15,7 @@ import { DockerIsolationProvider } from './providers/isolation-docker/index.js';
 import { PodmanIsolationProvider } from './providers/isolation-podman/index.js';
 import { readForgeConfigSync } from './core/config.js';
 import { ShellValidationProvider } from './providers/validation-shell/index.js';
+import { HeuristicTaskDiscoveryProvider } from './providers/discovery-heuristic/index.js';
 
 export function isolationProvider() {
   const configured = readForgeConfigSync()?.providers?.isolation;
@@ -31,7 +32,9 @@ function runtime() {
   const requestedValidation = config?.providers?.validation;
   if (requestedValidation && requestedValidation !== 'shell' && requestedValidation !== 'validation.shell') throw new Error(`Unknown validation provider '${requestedValidation}'. Expected shell or validation.shell.`);
   const validation = validationCommands.length ? new ShellValidationProvider(validationCommands) : undefined;
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation });
+  const requestedDiscovery = config?.providers?.taskDiscovery;
+  if (requestedDiscovery && requestedDiscovery !== 'heuristic' && requestedDiscovery !== 'task-discovery.heuristic') throw new Error(`Unknown task discovery provider '${requestedDiscovery}'. Expected heuristic or task-discovery.heuristic.`);
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider() });
 }
 
 const program = new Command();
@@ -93,7 +96,7 @@ task.command('create <title>').option('-d, --description <text>').option('-c, --
   const t = await runtime().createTask(title, { description: opts.description, complexity: opts.complexity, createIssue: opts.issue });
   console.log(`${t.id} ${t.status} ${t.title}`);
 });
-task.command('list').action(async () => { for (const t of await runtime().deps.store.list()) console.log(`${t.id}\t${t.status}\t${t.complexity}\t${t.title}`); });
+task.command('list').action(async () => { for (const t of await runtime().deps.store.list()) console.log(`${t.id}\t${t.status}\t${t.complexity}\t${t.title}${t.discovery?.resourceScopes.length ? `\tscopes=${t.discovery.resourceScopes.map(scope => `${scope.kind}:${scope.value}`).join(',')}` : ''}`); });
 task.command('spec <id> <body>').action(async (id, body) => { const t = await runtime().writeSpec(id, body); console.log(`${t.id} ${t.status} ${t.spec?.path}`); });
 task.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
 task.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern, chunk => process.stdout.write(chunk)), null, 2)); });

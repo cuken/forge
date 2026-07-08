@@ -7,6 +7,7 @@ import { ForgeRuntime } from '../src/core/forge.js';
 import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
 import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import type { ChangeSetProvider } from '../src/core/changes.js';
+import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
 import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
@@ -15,6 +16,7 @@ class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; runs: string[]=[]; async run(input:{task:Task; workspacePath:string; context:string; onOutput?: (chunk: string) => void}){ this.runs.push(input.task.id); input.onOutput?.('agent output\n'); return { exitCode: 0, output: 'ok' }; } }
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; accepted: string[]=[]; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ this.accepted.push(input.run.id); return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
 class MemoryValidation implements ValidationProvider, ForgeProvider { id='validation.memory'; kind='validation'; constructor(private status:'pass'|'fail'){} async validate(){ return [{ id: 'validation.memory:gate', status: this.status, message: this.status === 'pass' ? 'ok' : 'not ok' }]; } }
+class MemoryDiscovery implements TaskDiscoveryProvider, ForgeProvider { id='task-discovery.memory'; kind='task-discovery'; async discoverTask(input:{title:string}){ return { providerId: this.id, discoveredAt: '2026-01-01T00:00:00.000Z', resourceScopes: [{ kind: 'path' as const, value: `src/${input.title}.ts`, confidence: 'high' as const, reason: 'test scope' }] }; } }
 
 async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
@@ -24,12 +26,27 @@ async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
   return { rt, agent, changeSet };
 }
 
+async function makeRuntimeWithDiscovery() {
+  const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), taskDiscovery: new MemoryDiscovery() });
+  return { rt };
+}
+
 describe('Forge vertical slice', () => {
   it('initializes config, store, and project context', async () => {
     const { rt } = await makeRuntime();
     const cfg = await rt.init('demo');
     expect(cfg.providers.store).toBe('store.filesystem');
     expect(await rt.deps.vcs.isRepo()).toBe(true);
+  });
+
+  it('stores provider-neutral task discovery metadata when a discovery provider is configured', async () => {
+    const { rt } = await makeRuntimeWithDiscovery();
+    await rt.init('demo');
+    const task = await rt.createTask('resourceful-task');
+
+    expect(task.discovery).toMatchObject({ providerId: 'task-discovery.memory', resourceScopes: [{ kind: 'path', value: 'src/resourceful-task.ts', confidence: 'high' }] });
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ discovery: { providerId: 'task-discovery.memory' } });
   });
 
   it('creates small tasks as ready and medium tasks behind spec gate', async () => {

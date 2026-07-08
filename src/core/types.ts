@@ -1,3 +1,4 @@
+import type { TaskDiscoveryMetadata } from './discovery.js';
 import type { ExecutionEnvironment } from './isolation.js';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -15,6 +16,7 @@ export interface Task {
   issue?: IssueRef;
   spec?: SpecRef;
   contextRefs: string[];
+  discovery?: TaskDiscoveryMetadata;
 }
 
 export interface IssueRef { provider: string; id: string; url?: string; }
@@ -33,6 +35,7 @@ export interface ForgeConfig {
     buildPlanner?: string;
     changeSet?: string;
     validation?: string;
+    taskDiscovery?: string;
   };
   pi?: { command: string; args: string[] };
   github?: { owner?: string; repo?: string };

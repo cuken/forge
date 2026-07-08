@@ -14,6 +14,7 @@ Defined in `src/core/types.ts`:
 - `ScmProvider` — source-control-management systems such as GitHub issues
 - `ChangeSetProvider` — review and accept changes produced by completed runs
 - `ValidationProvider` — run provider-neutral gates before completed runs are accepted
+- `TaskDiscoveryProvider` — attach provider-neutral discovery metadata, including likely task resource scopes, when tasks are created
 
 ## Current optional capabilities
 
@@ -22,6 +23,7 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `DoctorProvider` — declares environment checks for `forge doctor`; isolation providers also use these checks for `forge isolation status`
 - `SyncProvider` — declares ordered sync tasks for `forge sync`
 - `BuildPlannerProvider` — converts natural-language build requests into task/spec/run plans for `forge build`
+- `TaskDiscoveryProvider` — discovers likely resource scopes for task metadata; the runtime calls it structurally during task creation
 
 Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`.
 
@@ -76,9 +78,16 @@ export class MyAgentProvider implements AgentProvider, DoctorProvider {
 
 Initial implementation: `build-planner.heuristic`. Future implementations can survey the repo with code indexes, query memory/context providers, or spawn agents before estimating complexity.
 
+## Task discovery
+
+`TaskDiscoveryProvider` lets providers annotate newly-created tasks with metadata about likely resource scopes without coupling Forge core to a code host, tracker, or index. The metadata is stored on the task as `discovery`, with the provider id, discovery timestamp, and `resourceScopes` entries such as `path`, `provider`, `config`, `docs`, `tests`, or `unknown`.
+
+Initial implementation: `task-discovery.heuristic`, which recognizes explicit file paths and broad terms such as provider, config, docs, tests, task metadata, resource scopes, and discovery.
+
 ## Current implementations
 
 - `src/providers/build-heuristic` estimates request complexity and drafts specs for complex tasks.
+- `src/providers/discovery-heuristic` attaches heuristic task discovery metadata and resource scopes to newly-created tasks.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task and provides `change-set.git-worktree` for reviewing changed files and accepting run branches back into the project checkout. New configs record this provider as `providers.changeSet`.

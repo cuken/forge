@@ -94,7 +94,7 @@ This should draft a spec and print the approval command. Future planners may use
 
 ## `forge task create <title>`
 
-Creates a task in the configured `TaskStore`.
+Creates a task in the configured `TaskStore`. If a `TaskDiscoveryProvider` is configured, Forge also stores task discovery metadata with likely resource scopes.
 
 Options:
 
@@ -109,7 +109,7 @@ Complexity policy:
 
 ## `forge task list`
 
-Lists local tasks with ID, status, complexity, and title.
+Lists local tasks with ID, status, complexity, title, and discovered resource scopes when present.
 
 ## `forge task spec <id> <body>`
 

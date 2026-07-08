@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
 import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type ChangeSetSummary } from './changes.js';
+import { hasTaskDiscovery, type TaskDiscoveryProvider } from './discovery.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
 import { resolveTask } from './resolve.js';
@@ -11,7 +12,7 @@ import type { AgentProvider, ForgeConfig, ForgeProvider, RunStore, ScmProvider, 
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -19,13 +20,13 @@ export class ForgeRuntime {
     await this.deps.vcs.init();
     await this.deps.store.init();
     await this.deps.runStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery].filter(Boolean); }
 
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
@@ -75,7 +76,9 @@ export class ForgeRuntime {
     const status: Task['status'] = complexity === 'medium' || complexity === 'large' ? 'needs-spec' : 'ready';
     let issue;
     if (options.createIssue && this.deps.scm) issue = await this.deps.scm.createIssue({ title, body: options.description ?? title });
-    return this.deps.store.create({ title, description: options.description, complexity, status, issue, contextRefs: [] });
+    const discoveryProvider = this.providers().find(provider => hasTaskDiscovery(provider));
+    const discovery = discoveryProvider && hasTaskDiscovery(discoveryProvider) ? await discoveryProvider.discoverTask({ title, description: options.description, complexity }) : undefined;
+    return this.deps.store.create({ title, description: options.description, complexity, status, issue, contextRefs: [], discovery });
   }
 
   async writeSpec(taskId: string, body: string) {
