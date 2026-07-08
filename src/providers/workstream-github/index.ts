@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { HealthCheck } from '../../core/health.js';
 import type { Task } from '../../core/types.js';
-import type { WorkstreamItem, WorkstreamProvider } from '../../core/workstream.js';
+import type { WorkstreamCompletionUpdate, WorkstreamItem, WorkstreamProvider } from '../../core/workstream.js';
 import { runCommand } from '../../util/command.js';
 import { readJson, writeJson } from '../../util/fs.js';
 
@@ -92,6 +92,18 @@ export class GitHubIssuesWorkstreamProvider implements WorkstreamProvider {
     return updated;
   }
 
+  async completeWorkstreamItem(input: WorkstreamCompletionUpdate): Promise<void> {
+    const issue = await this.findIssue(input.itemId, 'all');
+    if (!issue) throw new Error(`No GitHub workstream issue '${input.itemId}'`);
+    const labels = new Set(issue.labels.map(label => typeof label === 'string' ? label : label.name).filter((label): label is string => !!label));
+    labels.delete('forge:planned');
+    labels.delete('forge:queued');
+    labels.add('forge:done');
+    const body = this.bodyWithCompletionMetadata(issue.body ?? '', input);
+    await this.transport.request('PATCH', `${this.issuesPath()}/${issue.number}`, { state: 'closed', labels: [...labels], body });
+    await this.transport.request('POST', `${this.issuesPath()}/${issue.number}/comments`, { body: completionComment(input) });
+  }
+
   checks(): HealthCheck[] { return [
     { id: 'github-workstream:token', label: 'GitHub token', run: async () => (await resolveGitHubToken()) ? { id: 'github-workstream:token', status: 'pass', message: 'GitHub token available (env or gh auth)' } : { id: 'github-workstream:token', status: 'fail', message: 'No GitHub token: set GITHUB_TOKEN/GH_TOKEN or run gh auth login' } },
     { id: 'github-workstream:config', label: 'GitHub repository config', run: async () => this.owner() && this.repo() ? { id: 'github-workstream:config', status: 'pass', message: `GitHub repo ${this.owner()}/${this.repo()} configured` } : { id: 'github-workstream:config', status: 'fail', message: '[github] owner and repo are required' } },
@@ -106,10 +118,11 @@ export class GitHubIssuesWorkstreamProvider implements WorkstreamProvider {
     const dependencies = metadata.dependencies ?? parseHumanDependencies(issue.body ?? '');
     return { id, title: issue.title, description: stripMetadata(issue.body ?? '') || undefined, dependencies, complexity: complexities.find(level => labels.includes(`forge:${level}`)) ?? 'small', status: labels.includes('forge:queued') ? 'queued' : 'planned', taskId: metadata.taskId ?? cache[id]?.taskId ?? cache[`#${issue.number}`]?.taskId };
   }
-  private async findIssue(id: string) { return (await this.listRaw()).find(issue => this.issueToItem(issue, {}).id === id || `#${issue.number}` === id || String(issue.number) === id); }
-  private async listRaw() { return (await this.transport.request<GitHubIssue[]>('GET', `${this.issuesPath()}?state=open&labels=${encodeURIComponent('forge:workstream')}&per_page=100`)).filter(issue => !issue.pull_request); }
+  private async findIssue(id: string, state: 'open' | 'all' = 'open') { return (await this.listRaw(state)).find(issue => this.issueToItem(issue, {}).id === id || `#${issue.number}` === id || String(issue.number) === id); }
+  private async listRaw(state: 'open' | 'all' = 'open') { return (await this.transport.request<GitHubIssue[]>('GET', `${this.issuesPath()}?state=${state}&labels=${encodeURIComponent('forge:workstream')}&per_page=100`)).filter(issue => !issue.pull_request); }
   private labelsFor(item: WorkstreamItem) { return ['forge:workstream', `forge:${item.complexity}`, item.status === 'queued' ? 'forge:queued' : 'forge:planned']; }
   private bodyFor(item: WorkstreamItem, previous?: string) { const description = stripMetadata(previous ?? item.description ?? '').trim(); const deps = item.dependencies.length ? `\n\nDepends on: ${item.dependencies.join(', ')}` : ''; return `${description}${deps}\n\n${markerStart}${JSON.stringify({ id: item.id, dependencies: item.dependencies, taskId: item.taskId })}${markerEnd}`.trim(); }
+  private bodyWithCompletionMetadata(previous: string, input: WorkstreamCompletionUpdate) { const metadata = parseMetadata(previous); return this.bodyFor({ id: metadata.id ?? input.itemId, title: input.itemId, description: stripMetadata(previous), dependencies: metadata.dependencies ?? [], complexity: 'small', status: 'planned', taskId: metadata.taskId ?? (typeof input.metadata?.taskId === 'string' ? input.metadata.taskId : undefined) }).replace(markerEnd, `,"completion":${JSON.stringify({ status: input.status, acceptedRunId: input.acceptedRunId, commit: input.commit, sync: input.sync })}${markerEnd}`); }
   private owner() { return this.config.owner ?? process.env.GITHUB_OWNER; }
   private repo() { return this.config.repo ?? process.env.GITHUB_REPO; }
   private issuesPath() { const owner = this.owner(), repo = this.repo(); if (!owner || !repo) throw new Error('[github] owner and repo are required'); return `/repos/${owner}/${repo}/issues`; }
@@ -129,4 +142,13 @@ function parseHumanDependencies(body: string): string[] {
   return [...refs];
 }
 function stripMetadata(body: string): string { const start = body.indexOf(markerStart); if (start === -1) return body.trim(); const end = body.indexOf(markerEnd, start); return `${body.slice(0, start)}${end === -1 ? '' : body.slice(end + markerEnd.length)}`.replace(/\n\nDepends on:.*$/s, '').trim(); }
+function completionComment(input: WorkstreamCompletionUpdate): string {
+  const lines = [`Forge accepted run ${input.acceptedRunId ?? '(unknown run)'}.`];
+  if (input.metadata?.taskId) lines.push(`Task: ${input.metadata.taskId}${input.metadata.taskTitle ? ` — ${input.metadata.taskTitle}` : ''}`);
+  if (input.commit) lines.push(`Commit: ${formatRef(input.commit)}`);
+  if (input.sync) lines.push(`Sync: ${formatRef(input.sync)}`);
+  if (input.comment) lines.push('', input.comment);
+  return lines.join('\n');
+}
+function formatRef(ref: NonNullable<WorkstreamCompletionUpdate['commit']>): string { return [ref.sha, ref.branch, ref.url, ref.status, ref.message].filter(Boolean).join(' | '); }
 interface GitHubIssue { number: number; title: string; body?: string | null; labels: Array<string | { name: string }>; pull_request?: unknown }

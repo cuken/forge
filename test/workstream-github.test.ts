@@ -76,6 +76,33 @@ describe('GitHubIssuesWorkstreamProvider', () => {
     await expect(readFile(join(root, '.forge', 'github-workstream-links.json'), 'utf8')).resolves.toContain('task-123');
   });
 
+  it('closes linked issues with done audit labels, completion metadata, and accepted run comments', async () => {
+    const transport = new MockGitHub();
+    const provider = new GitHubIssuesWorkstreamProvider({ owner: 'acme', repo: 'repo' }, process.cwd(), transport);
+
+    await provider.completeWorkstreamItem({
+      itemId: 'github-provider',
+      status: 'completed',
+      acceptedRunId: 'run-123',
+      comment: 'Accepted changes',
+      commit: { sha: 'abc123', branch: 'main', url: 'https://example.test/commit/abc123' },
+      sync: { status: 'pushed', url: 'https://example.test/pull/1' },
+      metadata: { taskId: 'task-123', taskTitle: 'Build GitHub provider' },
+    });
+
+    const patch = transport.requests.find(request => request.method === 'PATCH' && request.path.endsWith('/issues/1'));
+    expect(patch?.body).toMatchObject({ state: 'closed' });
+    expect((patch?.body as { labels: string[] }).labels).toContain('forge:done');
+    expect((patch?.body as { labels: string[] }).labels).not.toContain('forge:queued');
+    expect(JSON.stringify(patch?.body)).toContain('run-123');
+    expect(JSON.stringify(patch?.body)).toContain('abc123');
+    const comment = transport.requests.find(request => request.method === 'POST' && request.path.endsWith('/comments'));
+    expect((comment?.body as { body?: string }).body).toContain('Forge accepted run run-123');
+    expect((comment?.body as { body?: string }).body).toContain('task-123');
+    expect((comment?.body as { body?: string }).body).toContain('abc123');
+    expect((comment?.body as { body?: string }).body).toContain('pushed');
+  });
+
   it('declares doctor checks for token and GitHub repo config', async () => {
     vi.stubEnv('GITHUB_TOKEN', 'token');
     const provider = new GitHubIssuesWorkstreamProvider({ owner: 'acme', repo: 'repo' }, process.cwd(), new MockGitHub());

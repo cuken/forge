@@ -50,7 +50,7 @@ export interface WorkstreamCompletionProvider extends ForgeProvider {
 }
 
 export function hasWorkstreamCompletion(provider: unknown): provider is WorkstreamCompletionProvider {
-  return !!provider && typeof provider === 'object' && (provider as { kind?: unknown }).kind === 'workstream-completion' && typeof (provider as { completeWorkstreamItem?: unknown }).completeWorkstreamItem === 'function';
+  return !!provider && typeof provider === 'object' && typeof (provider as { completeWorkstreamItem?: unknown }).completeWorkstreamItem === 'function';
 }
 
 export interface WorkstreamDraft {
