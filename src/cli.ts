@@ -14,6 +14,7 @@ import { HostIsolationProvider } from './providers/isolation-host/index.js';
 import { DockerIsolationProvider } from './providers/isolation-docker/index.js';
 import { PodmanIsolationProvider } from './providers/isolation-podman/index.js';
 import { readForgeConfigSync } from './core/config.js';
+import { ShellValidationProvider } from './providers/validation-shell/index.js';
 
 export function isolationProvider() {
   const configured = readForgeConfigSync()?.providers?.isolation;
@@ -25,7 +26,12 @@ export function isolationProvider() {
 }
 
 function runtime() {
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider() });
+  const config = readForgeConfigSync();
+  const validationCommands = config?.validation?.commands ?? [];
+  const requestedValidation = config?.providers?.validation;
+  if (requestedValidation && requestedValidation !== 'shell' && requestedValidation !== 'validation.shell') throw new Error(`Unknown validation provider '${requestedValidation}'. Expected shell or validation.shell.`);
+  const validation = validationCommands.length ? new ShellValidationProvider(validationCommands) : undefined;
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation });
 }
 
 const program = new Command();
@@ -108,6 +114,14 @@ run.command('review <id>').description('Summarize the change set produced by a s
   const summary = await runtime().reviewRun(id);
   console.log(`${summary.status} ${summary.runId} ${summary.files.length} file(s)`);
   if (summary.summary) console.log(summary.summary);
+});
+run.command('validate <id>').description('Run validation gates for a succeeded run').action(async id => {
+  const results = await runtime().validateRun(id);
+  for (const r of results) {
+    const mark = r.status === 'pass' ? '✓' : '✗';
+    console.log(`${mark} ${r.id}: ${r.message}`);
+    if (r.detail) console.log(`  ${r.detail.trim().split('\n').join('\n  ')}`);
+  }
 });
 run.command('accept <id>').description('Accept the change set from a succeeded run and mark its task done').option('-m, --message <message>', 'accept/commit message').action(async (id, opts) => {
   const result = await runtime().acceptRun(id, opts.message);

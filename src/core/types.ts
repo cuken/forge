@@ -32,9 +32,11 @@ export interface ForgeConfig {
     scm?: string;
     buildPlanner?: string;
     changeSet?: string;
+    validation?: string;
   };
   pi?: { command: string; args: string[] };
   github?: { owner?: string; repo?: string };
+  validation?: { commands: string[] };
 }
 
 export interface TaskStore extends ForgeProvider {

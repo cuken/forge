@@ -7,18 +7,20 @@ import { ForgeRuntime } from '../src/core/forge.js';
 import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
 import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import type { ChangeSetProvider } from '../src/core/changes.js';
-import type { AgentProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
+import type { ValidationProvider } from '../src/core/validation.js';
+import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; repo=false; async isRepo(){return this.repo;} async init(){this.repo=true;} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
 class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; async create(input:{task:Task}){ return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; runs: string[]=[]; async run(input:{task:Task; workspacePath:string; context:string; onOutput?: (chunk: string) => void}){ this.runs.push(input.task.id); input.onOutput?.('agent output\n'); return { exitCode: 0, output: 'ok' }; } }
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; accepted: string[]=[]; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ this.accepted.push(input.run.id); return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
+class MemoryValidation implements ValidationProvider, ForgeProvider { id='validation.memory'; kind='validation'; constructor(private status:'pass'|'fail'){} async validate(){ return [{ id: 'validation.memory:gate', status: this.status, message: this.status === 'pass' ? 'ok' : 'not ok' }]; } }
 
-async function makeRuntime() {
+async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
   const agent = new MemoryAgent();
   const changeSet = new MemoryChangeSet();
-  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet });
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet, validation });
   return { rt, agent, changeSet };
 }
 
@@ -78,5 +80,17 @@ describe('Forge vertical slice', () => {
     await expect(rt.acceptRun(runId, 'accept reviewable task')).resolves.toMatchObject({ status: 'accepted', message: 'accepted file.txt' });
     expect(changeSet.accepted).toEqual([runId]);
     expect((await rt.deps.store.get(task.id))?.status).toBe('done');
+  });
+
+  it('runs provider-neutral validation gates before accepting completed runs', async () => {
+    const { rt, changeSet } = await makeRuntime(new MemoryValidation('fail'));
+    await rt.init('demo');
+    const task = await rt.createTask('validation gated task');
+    const results = await rt.runTask(task.id);
+    const runId = results[0].run!;
+
+    await expect(rt.acceptRun(runId)).rejects.toThrow('Validation failed');
+    expect(changeSet.accepted).toEqual([]);
+    expect((await rt.deps.store.get(task.id))?.status).toBe('reviewing');
   });
 });

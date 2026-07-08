@@ -22,4 +22,12 @@ describe('Forge config loading', () => {
 
     expect(readForgeConfigSync(root)?.providers?.isolation).toBe('docker');
   });
+
+  it('reads shell validation commands from forge toml config', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-config-validation-test-'));
+    await mkdir(join(root, '.forge'));
+    await writeFile(join(root, '.forge', 'config.toml'), '[providers]\nvalidation = "shell"\n\n[validation]\ncommands = ["npm test", "npm run build"]\n');
+
+    expect(readForgeConfigSync(root)?.validation?.commands).toEqual(['npm test', 'npm run build']);
+  });
 });

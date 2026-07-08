@@ -6,11 +6,12 @@ import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { IsolationProvider, IsolationStatus } from './isolation.js';
 import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
+import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
 import type { AgentProvider, ForgeConfig, ForgeProvider, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -18,13 +19,13 @@ export class ForgeRuntime {
     await this.deps.vcs.init();
     await this.deps.store.init();
     await this.deps.runStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id }, pi: { command: 'pi', args: ['-p'] } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation].filter(Boolean); }
 
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
@@ -117,11 +118,22 @@ export class ForgeRuntime {
     return this.changeSetProvider().review({ run });
   }
 
+  async validateRun(idOrPrefix: string): Promise<ValidationGateResult[]> {
+    const run = await this.resolveRun(idOrPrefix);
+    if (run.status !== 'succeeded') throw new Error(`Run ${run.id} is ${run.status}, not succeeded`);
+    const providers = this.providers().filter(provider => hasValidation(provider));
+    const results = (await Promise.all(providers.map(provider => provider.validate({ run })))).flat();
+    const failed = results.filter(result => result.status === 'fail');
+    if (failed.length) throw new Error(`Validation failed for run ${run.id}: ${failed.map(result => result.message).join('; ')}`);
+    return results;
+  }
+
   async acceptRun(idOrPrefix: string, message?: string): Promise<AcceptChangeSetResult> {
     const run = await this.resolveRun(idOrPrefix);
     if (run.status !== 'succeeded') throw new Error(`Run ${run.id} is ${run.status}, not succeeded`);
     const task = await this.deps.store.get(run.taskId);
     if (!task || task.status !== 'reviewing') throw new Error(`Task ${run.taskId} is ${task?.status ?? 'missing'}, not reviewing`);
+    await this.validateRun(run.id);
     const result = await this.changeSetProvider().accept({ run, message });
     await this.deps.store.update(run.taskId, { status: 'done' });
     return result;

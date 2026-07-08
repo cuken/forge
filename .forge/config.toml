@@ -1,2 +1,6 @@
 [providers]
 isolation = "podman"
+validation = "shell"
+
+[validation]
+commands = ["npm ci", "npm test", "npm run build"]

@@ -176,9 +176,23 @@ Prints captured output for a durable run from `.forge/logs/<run-id>.log` so user
 
 Summarizes the provider-neutral change set for a succeeded run. The runtime calls the configured `ChangeSetProvider`; the built-in Git worktree implementation reports changed files, diff stats, and name-status output from the run workspace.
 
+## `forge runs validate <id>`
+
+Runs provider-neutral validation gates for a succeeded run. Configure the built-in shell validation provider in `.forge/config.toml`:
+
+```toml
+[providers]
+validation = "shell"
+
+[validation]
+commands = ["npm test", "npm run build"]
+```
+
+Each command executes in the completed run workspace. Any non-zero exit is a failed gate.
+
 ## `forge runs accept <id>`
 
-Accepts the provider-neutral change set for a succeeded run whose task is `reviewing`, then marks the task `done`.
+Accepts the provider-neutral change set for a succeeded run whose task is `reviewing`, then marks the task `done`. Validation gates run first; acceptance is blocked if any gate fails.
 
 Options:
 

@@ -33,6 +33,13 @@ function parseForgeToml(input: string): Partial<ForgeConfig> {
       section = sectionMatch[1].trim();
       continue;
     }
+    const arrayAssignment = line.match(/^([A-Za-z0-9_-]+)\s*=\s*\[(.*)\]\s*$/);
+    if (arrayAssignment) {
+      const [, key, rawValues] = arrayAssignment;
+      const values = [...rawValues.matchAll(/"([^"]*)"/g)].map(match => match[1]);
+      if (section === 'validation' && key === 'commands') config.validation = { ...config.validation, commands: values };
+      continue;
+    }
     const assignment = line.match(/^([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*$/);
     if (!assignment) continue;
     const [, key, value] = assignment;

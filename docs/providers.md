@@ -13,6 +13,7 @@ Defined in `src/core/types.ts`:
 - `AgentProvider` — execute agent work
 - `ScmProvider` — source-control-management systems such as GitHub issues
 - `ChangeSetProvider` — review and accept changes produced by completed runs
+- `ValidationProvider` — run provider-neutral gates before completed runs are accepted
 
 ## Current optional capabilities
 
@@ -86,3 +87,4 @@ Initial implementation: `build-planner.heuristic`. Future implementations can su
 - `src/providers/isolation-podman` prepares a Podman container with the task workspace bind-mounted, can run provider-owned setup hooks, verifies readiness with a retrying readiness command, exposes an environment executor that runs agent commands through `podman exec`, declares Podman doctor checks, and removes the container during isolation cleanup. Default image is `localhost/forge-agent-pi:latest`; build it with `npm run podman:image` or configure `FORGE_PODMAN_IMAGE`, `FORGE_PODMAN_READY`, and `FORGE_PODMAN_READY_ATTEMPTS`. Workspace mounts default to `rw,Z`/`ro,Z` for rootless Podman on SELinux systems. By default the provider copies the host pi agent config into `/root/.pi/agent` so containerized `pi` can use the same auth while keeping session writes inside the ephemeral container; disable with `FORGE_PODMAN_MOUNT_PI_CONFIG=0` or override source with `FORGE_PODMAN_PI_CONFIG`.
 - `src/providers/agent-pi` runs `pi -p` against a task/workspace prompt.
 - `src/providers/scm-github` creates issues and validates GitHub CLI state.
+- `src/providers/validation-shell` implements `ValidationProvider` by running configured shell commands from `.forge/config.toml` `[validation] commands = [...]` in the completed run workspace before `forge runs accept` proceeds.
