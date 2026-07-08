@@ -36,6 +36,7 @@ export interface ForgeConfig {
     changeSet?: string;
     validation?: string;
     taskDiscovery?: string;
+    lease?: string;
   };
   pi?: { command: string; args: string[] };
   github?: { owner?: string; repo?: string };

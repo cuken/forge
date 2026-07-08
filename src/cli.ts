@@ -16,6 +16,7 @@ import { PodmanIsolationProvider } from './providers/isolation-podman/index.js';
 import { readForgeConfigSync } from './core/config.js';
 import { ShellValidationProvider } from './providers/validation-shell/index.js';
 import { HeuristicTaskDiscoveryProvider } from './providers/discovery-heuristic/index.js';
+import { MemoryLeaseProvider } from './providers/lease-memory/index.js';
 
 export function isolationProvider() {
   const configured = readForgeConfigSync()?.providers?.isolation;
@@ -34,7 +35,9 @@ function runtime() {
   const validation = validationCommands.length ? new ShellValidationProvider(validationCommands) : undefined;
   const requestedDiscovery = config?.providers?.taskDiscovery;
   if (requestedDiscovery && requestedDiscovery !== 'heuristic' && requestedDiscovery !== 'task-discovery.heuristic') throw new Error(`Unknown task discovery provider '${requestedDiscovery}'. Expected heuristic or task-discovery.heuristic.`);
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider() });
+  const requestedLease = config?.providers?.lease;
+  if (requestedLease && requestedLease !== 'memory' && requestedLease !== 'lease.memory') throw new Error(`Unknown lease provider '${requestedLease}'. Expected memory or lease.memory.`);
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease: new MemoryLeaseProvider() });
 }
 
 const program = new Command();

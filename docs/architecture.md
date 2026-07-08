@@ -30,6 +30,7 @@ Pi keeps a small harness and makes behavior discoverable through project instruc
 - **Context** — reusable project/task knowledge to reduce repeated repo discovery.
 - **Sync** — provider-declared reconciliation between local state and declared upstream systems.
 - **Change set** — provider-neutral summary and acceptance hook for changes produced by a completed run.
+- **Resource scope lease** — provider-neutral claim on discovered task scopes, acquired before execution and released after completion/failure.
 - **Build plan** — provider-generated translation from a natural-language request into task complexity, spec policy, and execution flow.
 
 ## Boundary rule
@@ -57,7 +58,7 @@ await git.push('upstream', 'main');
 - `forge task create` creates local tasks and optionally GitHub issues.
 - `forge task spec` writes a spec file and moves a task to approval.
 - `forge task approve` marks the spec approved.
-- `forge task run-ready` creates worktrees, prepares an execution environment, invokes the configured agent for ready tasks, and records durable run metadata/logs for history inspection. It can dispatch multiple ready tasks concurrently with `--parallel`, but each task still crosses only the generic workspace, isolation, agent, and store provider contracts. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
+- `forge task run-ready` acquires provider-neutral leases for discovered resource scopes, creates worktrees, prepares an execution environment, invokes the configured agent, releases leases, and records durable run metadata/logs for history inspection. It can dispatch multiple ready tasks concurrently with `--parallel`, but each task still crosses only the generic lease, workspace, isolation, agent, and store provider contracts. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
 - `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime.
 
 ## Extension direction
@@ -72,6 +73,7 @@ Upcoming extensions should remain capability based:
 - `IsolationProvider`
 - `ReviewProvider`
 - `MergeProvider`
+- `LeaseProvider`
 - `PackageProvider`
 
 Each should be documented before broad implementation.

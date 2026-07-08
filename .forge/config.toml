@@ -1,6 +1,7 @@
 [providers]
 isolation = "podman"
 validation = "shell"
+lease = "memory"
 
 [validation]
 commands = ["npm ci", "npm test", "npm run build"]

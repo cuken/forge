@@ -15,6 +15,7 @@ Defined in `src/core/types.ts`:
 - `ChangeSetProvider` — review and accept changes produced by completed runs
 - `ValidationProvider` — run provider-neutral gates before completed runs are accepted
 - `TaskDiscoveryProvider` — attach provider-neutral discovery metadata, including likely task resource scopes, when tasks are created
+- `LeaseProvider` — acquire and release provider-neutral resource scope leases around task runs
 
 ## Current optional capabilities
 
@@ -24,6 +25,7 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `SyncProvider` — declares ordered sync tasks for `forge sync`
 - `BuildPlannerProvider` — converts natural-language build requests into task/spec/run plans for `forge build`
 - `TaskDiscoveryProvider` — discovers likely resource scopes for task metadata; the runtime calls it structurally during task creation
+- `LeaseProvider` — leases discovered resource scopes before workspace/isolation/agent execution and releases them after the run completes or fails
 
 Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`.
 
@@ -84,10 +86,17 @@ Initial implementation: `build-planner.heuristic`. Future implementations can su
 
 Initial implementation: `task-discovery.heuristic`, which recognizes explicit file paths and broad terms such as provider, config, docs, tests, task metadata, resource scopes, and discovery.
 
+## Resource scope leasing
+
+`LeaseProvider` lets Forge coordinate potentially-conflicting ready tasks without coupling the runtime to a specific queue, lock service, code host, or database. When a task has discovery `resourceScopes`, `ForgeRuntime.runReady()` acquires a lease before creating the workspace and releases it in a `finally` hook after the agent run completes or fails.
+
+Initial implementation: `lease.memory`, an in-process provider for local runs. It rejects overlapping scope keys such as `path:src/core/forge.ts` while the scope is already held. Future implementations can back the same interface with files, Redis, SCM checks, or remote schedulers.
+
 ## Current implementations
 
 - `src/providers/build-heuristic` estimates request complexity and drafts specs for complex tasks.
 - `src/providers/discovery-heuristic` attaches heuristic task discovery metadata and resource scopes to newly-created tasks.
+- `src/providers/lease-memory` implements `LeaseProvider` with in-memory scope locks for the current Forge process.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task and provides `change-set.git-worktree` for reviewing changed files and accepting run branches back into the project checkout. New configs record this provider as `providers.changeSet`.

@@ -9,6 +9,7 @@ import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
+import type { LeaseHandle, LeaseProvider } from '../src/core/lease.js';
 import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; repo=false; async isRepo(){return this.repo;} async init(){this.repo=true;} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
@@ -17,6 +18,7 @@ class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as 
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; accepted: string[]=[]; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ this.accepted.push(input.run.id); return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
 class MemoryValidation implements ValidationProvider, ForgeProvider { id='validation.memory'; kind='validation'; constructor(private status:'pass'|'fail'){} async validate(){ return [{ id: 'validation.memory:gate', status: this.status, message: this.status === 'pass' ? 'ok' : 'not ok' }]; } }
 class MemoryDiscovery implements TaskDiscoveryProvider, ForgeProvider { id='task-discovery.memory'; kind='task-discovery'; async discoverTask(input:{title:string}){ return { providerId: this.id, discoveredAt: '2026-01-01T00:00:00.000Z', resourceScopes: [{ kind: 'path' as const, value: `src/${input.title}.ts`, confidence: 'high' as const, reason: 'test scope' }] }; } }
+class MemoryLease implements LeaseProvider { id='lease.memory'; kind='lease' as const; acquired:string[]=[]; released:string[]=[]; async acquire(input:{task:Task}){ this.acquired.push(input.task.id); return { providerId: this.id, id: `lease-${input.task.id}`, taskId: input.task.id, scopes: input.task.discovery?.resourceScopes ?? [], acquiredAt: '2026-01-01T00:00:00.000Z' }; } async release(lease:LeaseHandle){ this.released.push(lease.taskId); } }
 
 async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
@@ -28,8 +30,9 @@ async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
 
 async function makeRuntimeWithDiscovery() {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
-  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), taskDiscovery: new MemoryDiscovery() });
-  return { rt };
+  const lease = new MemoryLease();
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), taskDiscovery: new MemoryDiscovery(), lease });
+  return { rt, lease };
 }
 
 describe('Forge vertical slice', () => {
@@ -47,6 +50,20 @@ describe('Forge vertical slice', () => {
 
     expect(task.discovery).toMatchObject({ providerId: 'task-discovery.memory', resourceScopes: [{ kind: 'path', value: 'src/resourceful-task.ts', confidence: 'high' }] });
     await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ discovery: { providerId: 'task-discovery.memory' } });
+  });
+
+  it('acquires and releases provider-neutral resource scope leases around agent runs', async () => {
+    const { rt, lease } = await makeRuntimeWithDiscovery();
+    await rt.init('demo');
+    const task = await rt.createTask('leaseable-task');
+
+    const results = await rt.runTask(task.id);
+
+    expect(results[0]).toMatchObject({ task: task.id, result: { exitCode: 0 } });
+    expect(lease.acquired).toEqual([task.id]);
+    expect(lease.released).toEqual([task.id]);
+    const log = await rt.deps.runStore!.readLog(results[0].run!);
+    expect(log).toContain('lease lease-');
   });
 
   it('creates small tasks as ready and medium tasks behind spec gate', async () => {

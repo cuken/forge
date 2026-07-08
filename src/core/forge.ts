@@ -5,6 +5,7 @@ import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type 
 import { hasTaskDiscovery, type TaskDiscoveryProvider } from './discovery.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
+import { hasLease, type LeaseHandle, type LeaseProvider } from './lease.js';
 import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
@@ -12,7 +13,7 @@ import type { AgentProvider, ForgeConfig, ForgeProvider, RunStore, ScmProvider, 
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -20,13 +21,13 @@ export class ForgeRuntime {
     await this.deps.vcs.init();
     await this.deps.store.init();
     await this.deps.runStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease].filter(Boolean); }
 
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
@@ -164,6 +165,7 @@ export class ForgeRuntime {
     const concurrency = Number.isFinite(requestedConcurrency) && requestedConcurrency > 0 ? requestedConcurrency : 1;
     const results: Array<{ task: string; run?: string; workspace?: { id: string; path: string; branch: string }; environment?: ExecutionEnvironment; result?: { exitCode: number; output: string }; error?: string }> = [];
     let next = 0;
+    const leaseProvider = this.providers().find(provider => hasLease(provider));
     const runOne = async (task: Task) => {
       observer?.(`starting task ${task.id}: ${task.title}\n`);
       const run = await this.deps.runStore?.start({ task, agentId: this.deps.agent.id });
@@ -171,7 +173,20 @@ export class ForgeRuntime {
       const emit = async (chunk: string) => { observer?.(chunk); if (run) await this.deps.runStore?.appendLog(run.id, chunk); };
       const capture = (chunk: string) => { outputWrites.push(emit(chunk)); };
       await this.deps.store.update(task.id, { status: 'running' });
+      let lease: LeaseHandle | undefined;
       try {
+        if (leaseProvider && hasLease(leaseProvider) && task.discovery?.resourceScopes.length) {
+          await emit(`acquiring ${task.discovery.resourceScopes.length} resource scope lease(s)...\n`);
+          while (!lease) {
+            try {
+              lease = await leaseProvider.acquire({ task, scopes: task.discovery.resourceScopes });
+            } catch (error) {
+              await emit(`lease unavailable, waiting: ${String(error)}\n`);
+              await new Promise(resolve => setTimeout(resolve, 25));
+            }
+          }
+          await emit(`lease ${lease.id} acquired by ${lease.providerId}\n`);
+        }
         await emit('creating workspace...\n');
         const ws = await this.deps.workspace.create({ task });
         await this.deps.runStore?.update(run!.id, { workspace: ws });
@@ -199,12 +214,25 @@ export class ForgeRuntime {
         await this.deps.store.update(task.id, { status: 'failed' });
         await this.deps.runStore?.update(run!.id, { status: 'failed', error: String(error), finishedAt: new Date().toISOString() });
         return { task: task.id, run: run?.id, error: String(error) };
+      } finally {
+        if (lease) {
+          try {
+            const leaseProvider = this.providers().find(provider => hasLease(provider));
+            if (leaseProvider && hasLease(leaseProvider)) {
+              await leaseProvider.release(lease);
+              await emit(`lease ${lease.id} released\n`);
+            }
+          } catch (releaseError) {
+            await emit(`lease release failed: ${String(releaseError)}\n`);
+          }
+        }
       }
     };
     const worker = async () => {
       while (next < ready.length) {
-        const task = ready[next++];
-        results[ready.indexOf(task)] = await runOne(task);
+        const index = next++;
+        const task = ready[index];
+        results[index] = await runOne(task);
       }
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, ready.length) }, worker));
