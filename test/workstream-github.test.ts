@@ -2,7 +2,17 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ForgeRuntime } from '../src/core/forge.js';
+import type { ChangeSetProvider } from '../src/core/changes.js';
+import type { AgentProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
+import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
+import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import { FetchGitHubRestTransport, GitHubIssuesWorkstreamProvider, type GitHubRestTransport } from '../src/providers/workstream-github/index.js';
+
+class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; async isRepo(){return true;} async init(){} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
+class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; async create(input:{task:Task}){ return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
+class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; async run(){ return { exitCode: 0, output: 'ok' }; } }
+class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt', commit: { providerId: this.id, sha: 'abc123', id: 'abc123', branch: 'forge/github-provider' }, sync: { providerId: this.id, id: 'pr-9', url: 'https://example.test/pull/9', status: 'open' } }; } }
 
 class MockGitHub implements GitHubRestTransport {
   requests: { method: string; path: string; body?: unknown }[] = [];
@@ -101,6 +111,44 @@ describe('GitHubIssuesWorkstreamProvider', () => {
     expect((comment?.body as { body?: string }).body).toContain('task-123');
     expect((comment?.body as { body?: string }).body).toContain('abc123');
     expect((comment?.body as { body?: string }).body).toContain('pushed');
+  });
+
+  it('closes a tracker-backed GitHub issue when its Forge run is accepted and surfaces close failures', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-github-workstream-e2e-'));
+    const transport = new MockGitHub();
+    transport.issues[0].body = 'Use issues\n\n<!-- forge-workstream:{"id":"github-provider","dependencies":["base"]}-->';
+    transport.issues[0].labels = [{ name: 'forge:workstream' }, { name: 'forge:small' }, { name: 'forge:planned' }];
+    const provider = new GitHubIssuesWorkstreamProvider({ owner: 'acme', repo: 'repo' }, root, transport);
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), workstream: provider, workstreamCompletion: provider });
+
+    const [task] = await rt.enqueueWorkstream(['github-provider']);
+    const [{ run }] = await rt.runReady(task.id);
+    await expect(rt.acceptRun(run!, 'accept GitHub-backed workstream item')).resolves.toMatchObject({ status: 'accepted' });
+
+    const close = transport.requests.find(request => request.method === 'PATCH' && request.path.endsWith('/issues/1') && (request.body as { state?: string }).state === 'closed');
+    expect(close?.body).toMatchObject({ state: 'closed' });
+    expect((close?.body as { labels: string[] }).labels).toContain('forge:done');
+    expect(JSON.stringify(close?.body)).toContain(run!);
+    expect(JSON.stringify(close?.body)).toContain(task.id);
+    expect(JSON.stringify(close?.body)).toContain('abc123');
+    const comments = transport.requests.filter(request => request.method === 'POST' && request.path.endsWith('/issues/1/comments'));
+    expect(comments.some(request => (request.body as { body?: string }).body?.includes(`Forge accepted run ${run}`))).toBe(true);
+
+    const failingTransport = new MockGitHub();
+    failingTransport.issues[0].body = 'Use issues\n\n<!-- forge-workstream:{"id":"github-provider","dependencies":["base"]}-->';
+    failingTransport.issues[0].labels = [{ name: 'forge:workstream' }, { name: 'forge:small' }, { name: 'forge:planned' }];
+    const originalRequest = failingTransport.request.bind(failingTransport);
+    failingTransport.request = async (method, path, body) => {
+      if (method === 'PATCH' && path.endsWith('/issues/1') && (body as { state?: string }).state === 'closed') throw new Error('GitHub close rejected');
+      return originalRequest(method, path, body);
+    };
+    const failingRoot = await mkdtemp(join(tmpdir(), 'forge-github-workstream-e2e-fail-'));
+    const failingProvider = new GitHubIssuesWorkstreamProvider({ owner: 'acme', repo: 'repo' }, failingRoot, failingTransport);
+    const failingRt = new ForgeRuntime({ root: failingRoot, store: new FileTaskStore(failingRoot), runStore: new FileRunStore(failingRoot), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), workstream: failingProvider, workstreamCompletion: failingProvider });
+    const [failingTask] = await failingRt.enqueueWorkstream(['github-provider']);
+    const [{ run: failingRun }] = await failingRt.runReady(failingTask.id);
+
+    await expect(failingRt.acceptRun(failingRun!, 'accept but tracker fails')).rejects.toThrow('Workstream completion update failed after run');
   });
 
   it('declares doctor checks for token and GitHub repo config', async () => {
