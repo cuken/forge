@@ -227,15 +227,19 @@ export class ForgeRuntime {
     }));
   }
 
-  private async lifecycleHook(event: LifecycleHookEvent, input: Omit<Parameters<typeof buildLifecyclePayload>[0], 'event'>) {
+  private async lifecycleHook(event: LifecycleHookEvent, input: Omit<Parameters<typeof buildLifecyclePayload>[0], 'event'>, options: { failOnError?: boolean } = {}) {
     const payload = buildLifecyclePayload({ ...input, event });
-    await Promise.all(this.providers().filter(provider => hasLifecycleHooks(provider)).map(async provider => {
+    const providers = this.providers().filter(provider => hasLifecycleHooks(provider));
+    const failures: string[] = [];
+    await Promise.all(providers.map(async provider => {
       try {
         await provider.lifecycleHook(payload);
-      } catch {
-        // Lifecycle hooks are provider-owned side effects; provider failures must not alter core state.
+      } catch (error) {
+        if (options.failOnError) failures.push(`${provider.id}: ${error instanceof Error ? error.message : String(error)}`);
+        // Non-critical lifecycle hooks are provider-owned side effects; provider failures must not alter core state.
       }
     }));
+    if (failures.length) throw new Error(`Lifecycle hook ${event} failed after local state was persisted. Resolve provider failure(s) and retry or inspect the accepted run state: ${failures.join('; ')}`);
   }
 
   private async completeLinkedWorkstream(input: { task: Task; run: RunRecord; acceptance: AcceptChangeSetResult }) {
@@ -611,7 +615,7 @@ export class ForgeRuntime {
     const result = await this.changeSetProvider().accept({ run, message });
     const acceptedRun = await this.deps.runStore?.update(run.id, { acceptance: { acceptedAt: new Date().toISOString(), providerId: result.providerId, status: result.status, message: result.message } });
     const updatedTask = (result.status === 'accepted' || result.status === 'empty') ? await this.deps.store.update(run.taskId, { status: 'done' }) : task;
-    await this.lifecycleHook('run.accepted', { task: updatedTask, run: acceptedRun ?? run, acceptance: result });
+    await this.lifecycleHook('run.accepted', { task: updatedTask, run: acceptedRun ?? run, acceptance: result }, { failOnError: true });
     await this.completeLinkedWorkstream({ task: updatedTask, run: acceptedRun ?? run, acceptance: result });
     return result;
   }
