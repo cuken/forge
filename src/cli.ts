@@ -20,6 +20,7 @@ import { PodmanIsolationProvider } from './providers/isolation-podman/index.js';
 import { readForgeConfigSync } from './core/config.js';
 import { ShellValidationProvider } from './providers/validation-shell/index.js';
 import { HeuristicTaskDiscoveryProvider } from './providers/discovery-heuristic/index.js';
+import { AgentSurveyTaskDiscoveryProvider } from './providers/discovery-agent-survey/index.js';
 import { MemoryLeaseProvider } from './providers/lease-memory/index.js';
 import { FileLeaseProvider } from './providers/lease-filesystem/index.js';
 import { FileWorkstreamProvider } from './providers/workstream-filesystem/index.js';
@@ -103,6 +104,7 @@ export function defaultProviderRegistry(config = readForgeConfigSync()) {
     .register({ kind: 'notification', id: 'notification.filesystem', aliases: ['filesystem'], create: () => new FilesystemNotificationProvider(process.cwd(), (config?.notifications?.channel ?? 'audit') as FilesystemNotificationChannel) })
     .register({ kind: 'validation', id: 'validation.shell', aliases: ['shell'], create: () => new ShellValidationProvider(config?.validation?.commands ?? []) })
     .register({ kind: 'task-discovery', id: 'task-discovery.heuristic', aliases: ['heuristic'], create: () => new HeuristicTaskDiscoveryProvider() })
+    .register({ kind: 'task-discovery', id: 'task-discovery.agent-survey', aliases: ['agent-survey', 'survey'], create: () => new AgentSurveyTaskDiscoveryProvider(piCommand, piArgs) })
     .register({ kind: 'lease', id: 'lease.memory', aliases: ['memory'], create: () => new MemoryLeaseProvider() })
     .register({ kind: 'lease', id: 'lease.filesystem', aliases: ['filesystem'], create: () => new FileLeaseProvider(process.cwd(), staleAfterMs) })
     .register({ kind: 'workstream', id: 'workstream.filesystem', aliases: ['filesystem'], create: () => new FileWorkstreamProvider() })

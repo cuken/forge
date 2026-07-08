@@ -84,6 +84,7 @@ FORGE_ISOLATION=podman FORGE_PODMAN_IMAGE=your-agent-image forge run toml
 # or set .forge/config.toml:
 # [providers]
 # isolation = "podman"
+# taskDiscovery = "agent-survey" # optional agent survey; default is heuristic
 forge sync --dry-run
 forge process --yolo --sync --parallel 3
 forge lease status

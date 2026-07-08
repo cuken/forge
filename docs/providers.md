@@ -130,7 +130,10 @@ The built-in `spec.pi` provider runs the configured pi command (`[pi] command`/`
 
 `TaskDiscoveryProvider` lets providers annotate newly-created tasks with metadata about likely resource scopes without coupling Forge core to a code host, tracker, or index. The metadata is stored on the task as `discovery`, with the provider id, discovery timestamp, and `resourceScopes` entries such as `path`, `provider`, `config`, `docs`, `tests`, or `unknown`.
 
-Initial implementation: `task-discovery.heuristic`, which recognizes explicit file paths anywhere in the task text and broad terms such as provider, config, docs, tests, task metadata, resource scopes, and discovery from the task title. Generic implementation checklist language in descriptions, such as "update docs" or "cover with tests", does not create broad `docs`/`tests` leases, so unrelated workstream items can still run in parallel.
+Built-in implementations:
+
+- `task-discovery.heuristic` recognizes explicit file paths anywhere in the task text and broad terms such as provider, config, docs, tests, task metadata, resource scopes, and discovery from the task title. Generic implementation checklist language in descriptions, such as "update docs" or "cover with tests", does not create broad `docs`/`tests` leases, so unrelated workstream items can still run in parallel. It is deterministic and does not require external tools, but it only sees simple text patterns.
+- `task-discovery.agent-survey` runs the configured pi command (`[pi] command`/`args`) and asks an agent to survey the title/description for likely resource scopes before execution. Select it with `[providers] taskDiscovery = "agent-survey"` (or `"task-discovery.agent-survey"`). It can infer less literal scopes than the heuristic provider, but it is intentionally best-effort: if the agent command is unavailable, exits unsuccessfully, or returns invalid JSON, Forge stores a single low-confidence `unknown` scope instead of failing task creation.
 
 ## Change sets
 
