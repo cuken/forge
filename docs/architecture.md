@@ -55,13 +55,13 @@ await git.push('upstream', 'main');
 
 - `forge init` initializes `.forge/` and Git.
 - `forge doctor` runs provider-declared environment checks.
-- `forge sync` runs provider-declared synchronization tasks and emits a provider-neutral `sync.completed` lifecycle hook with the sync input and results.
+- `forge sync` runs provider-declared synchronization tasks and emits a provider-neutral `sync.completed` lifecycle hook with the sync input and results. Lifecycle hooks are best-effort observation points; providers should use them for audit/automation reactions that must not control core state transitions.
 - `forge build <request>` turns natural language into the opinionated task/spec/run flow through a build planner provider.
 - `forge task create` creates local tasks and optionally GitHub issues.
 - `forge task spec` writes a spec file and moves a task to approval.
 - `forge task approve` marks the spec approved.
 - `forge task run-ready` acquires provider-neutral leases for discovered resource scopes (waiting with backoff and deferring the task back to `ready` if a scope stays busy past the lease-wait deadline), creates worktrees, prepares an execution environment, invokes the configured agent, releases leases, records durable run metadata/logs for history inspection, and emits `task.succeeded` or `task.failed` lifecycle hooks. It can dispatch multiple ready tasks concurrently with `--parallel`, but each task still crosses only the generic lease, workspace, isolation, agent, and store provider contracts. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
-- `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime. Successful acceptance records commit context and emits `run.accepted`.
+- `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime. Successful acceptance records provider-neutral commit context and emits `run.accepted`. If the task was created from a workstream item, acceptance also calls any configured `WorkstreamCompletionProvider` with neutral completion metadata (`itemId`, completion status, accepted run id, generic commit/sync references, and JSON task metadata). Completion-provider failures are surfaced to the accept caller after Forge has persisted the accepted run/task state, so operators can retry or repair the external tracker.
 - `forge release create/list/show/status/prepare` manages first-class release records and asks a generic provider to prepare human merge review without assuming GitHub releases, branch names, automatic merges, or any specific deployment provider.
 
 ## Extension direction

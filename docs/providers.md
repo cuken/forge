@@ -45,6 +45,8 @@ Optional capabilities must be discovered structurally with guards like `hasDocto
 
 Lifecycle hook payloads are defined in `src/core/lifecycle.ts` and intentionally avoid code-host/tracker-specific fields. Providers receive `identity` (`runId`, `taskId`, `taskTitle`, optional `workstreamItemId`), compact task/run snapshots, optional `commit` context from change-set acceptance, optional `sync` context from `forge sync`, and generic JSON metadata. Hook failures are best-effort side effects and must not alter core state transitions.
 
+Lifecycle hooks and workstream completion are intentionally separate contracts. Use `LifecycleHookProvider` for audit, notifications, metrics, cache refresh, or other reactions that should not block the state transition. Use `WorkstreamCompletionProvider` when an accepted Forge run must update the authoritative tracker/workstream item; failures from that provider are surfaced to the caller of `forge runs accept` so operators know the external completion update did not happen.
+
 ## Provider rules
 
 1. Provider IDs should be stable and namespaced, e.g. `vcs.git`, `agent.pi`, `scm.github`.
@@ -144,6 +146,52 @@ Built-in implementations:
 - `gate.github-issues` backs `GateProvider` with GitHub Issues via the `gh` CLI. Select it with `[providers] gate = "github"` or `"gate.github-issues"` and configure the same `[github] owner`/`repo`. It creates `forge:gate` issues containing spec text or run summaries, posts additional summaries as comments, and reads approvals from `forge:approved` / `forge:accepted` labels or `/approve` / `/accept` comments. Rejections use `forge:rejected` or `/reject`.
 
 Future implementations can back the same interface with Jira or any tracker that can represent titled items with dependencies — the runtime never sees tracker-specific concepts.
+
+## Workstream completion providers
+
+`WorkstreamCompletionProvider` is the tracker-completion path for accepted Forge work. Implement it when a provider owns a workstream/tracker item and needs to close, complete, comment on, or otherwise mark that item after a run is accepted. The contract lives in `src/core/workstream.ts`:
+
+```ts
+interface WorkstreamCompletionProvider extends ForgeProvider {
+  kind: 'workstream-completion';
+  completeWorkstreamItem(input: WorkstreamCompletionUpdate): Promise<void>;
+}
+```
+
+The runtime calls `completeWorkstreamItem()` from `forge runs accept` only after validation passes, the `ChangeSetProvider` returns `accepted` or `empty`, the run acceptance metadata is recorded, and the Forge task is moved to `done`. The task must contain a description line of the form `Workstream item: <id>`; `forge workstream enqueue` writes that line automatically. The provider receives:
+
+- `itemId` — the provider-neutral workstream item id from the task description.
+- `status` — currently `completed`; providers map this to their own closed/done state.
+- `acceptedRunId` — the Forge run id that was accepted.
+- `comment`/`body` — optional human-readable acceptance text.
+- `commit` — generic acceptance context: `providerId`, `status`, and `message` from the change-set provider. Do not assume Git, SHA, branch, pull request, or GitHub fields.
+- `sync` — reserved generic synchronization context for providers that receive completion from sync-style flows.
+- `metadata` — JSON such as `taskId` and `taskTitle`; provider-specific response ids belong in the provider's own storage, logs, or tracker comments, not in core task/run types.
+
+Completion providers should translate this neutral update into native tracker operations. For example, a Jira-like provider might transition issue `<itemId>` to Done and add a comment containing `acceptedRunId`, `taskId`, `taskTitle`, and `commit.message`; a spreadsheet provider might set a status column to `completed` and write the same audit metadata into notes. No provider should require GitHub issue labels or Git refs to understand the payload.
+
+Failure policy differs from lifecycle hooks: completion is part of the externally-visible acceptance workflow, so `completeWorkstreamItem()` failures are not swallowed. If the provider throws, the CLI command fails and prints the error after the Forge run/task acceptance has already been persisted. Make completion updates idempotent and retry-safe: before creating duplicate comments or transitions, check whether the accepted run id or task id has already been recorded. Return normally when the external item is already complete for the same run. Throw for unexpected backend failures or missing required external records so operators can retry `forge runs accept` or repair the tracker. Use provider-owned doctor checks for credentials, API reachability, and configured project/team ids so these failures are caught before acceptance when possible.
+
+## Lifecycle hook providers
+
+`LifecycleHookProvider` is for provider-owned reactions to durable Forge transitions. Implement it when an external system should observe state changes but should not control whether the state change succeeds. The contract lives in `src/core/lifecycle.ts`:
+
+```ts
+interface LifecycleHookProvider {
+  lifecycleHook(input: LifecycleHookPayload): Promise<void>;
+}
+```
+
+`ForgeRuntime` discovers hooks structurally with `hasLifecycleHooks()` and emits these events after the corresponding state has been persisted:
+
+- `sync.completed` — after `forge sync` runs provider-declared sync tasks; payload includes `sync.message`, `sync.dryRun`, and provider-neutral `sync.results`.
+- `task.succeeded` — after an agent exits successfully, logs/run state are recorded, and the task moves to `reviewing`.
+- `task.failed` — after a non-zero agent exit or runtime execution error is recorded and the task moves to `failed`; payload metadata includes a neutral `failureReason` and may include `exitCode`.
+- `run.accepted` — after `forge runs accept` records change-set acceptance and, for `accepted`/`empty`, moves the task to `done`; payload includes generic `commit` acceptance context.
+
+Hook payloads intentionally contain compact Forge snapshots rather than tracker-specific objects: `identity`, optional `task`, optional `run`, optional `commit`, optional `sync`, and JSON `metadata`. A hook provider decides whether to react based on the event and available identity. Common patterns are: ignore events without the required id, write an audit record for every event, refresh a dashboard on terminal task events, or notify a tracker on `run.accepted`. Because hook failures are swallowed by the runtime, hooks are unsuitable for required tracker completion; implement `WorkstreamCompletionProvider` for that path instead.
+
+Provider-specific correlation belongs outside core. Store external ids in provider-owned link caches, tracker metadata blocks, comments, or audit logs. If you need to correlate with a planned work item, use `identity.workstreamItemId`; if absent, the task was not linked through the workstream description convention and the provider should no-op unless it has another provider-owned mapping.
 
 ## Workstream planning
 
