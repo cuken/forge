@@ -286,7 +286,7 @@ GitHub implementation details: `scm.github` shells out to `gh`, resolves the rep
 
 ## `forge task create <title>`
 
-Creates a task in the configured `TaskStore`. If a `TaskDiscoveryProvider` is configured, Forge also stores task discovery metadata with likely resource scopes.
+Creates a task in the configured `TaskStore`. If a `TaskDiscoveryProvider` is configured, Forge also stores task discovery metadata with likely resource scopes. The default `heuristic` discovery provider is deterministic text matching; `[providers] taskDiscovery = "agent-survey"` asks the configured pi agent for scopes and safely records `unknown` when the agent is unavailable.
 
 Options:
 
