@@ -302,6 +302,10 @@ run.command('review <id>').description('Summarize the change set produced by a s
   console.log(`${summary.status} ${summary.runId} ${summary.files.length} file(s)`);
   if (summary.summary) console.log(summary.summary);
 });
+run.command('recover <id>').description('Recover an interrupted/stale running run by releasing its leases and returning the task to ready').option('--force', 'recover even if the run is not running or still has active leases').action(async (id, opts) => {
+  const result = await runtime().recoverRun(id, { force: opts.force });
+  console.log(`recovered run=${result.runId} task=${result.taskId} releasedLeases=${result.releasedLeases}`);
+});
 run.command('validate <id>').description('Run validation gates for a succeeded run').action(async id => {
   const results = await runtime().validateRun(id);
   for (const r of results) {

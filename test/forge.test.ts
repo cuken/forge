@@ -308,6 +308,20 @@ describe('Forge vertical slice', () => {
     await expect(rt.deps.runStore!.readLog(runId!)).resolves.toContain('agent exited 0');
   });
 
+  it('recovers interrupted running runs by deferring the run and returning the task to ready', async () => {
+    const { rt } = await makeRuntime();
+    await rt.init('demo');
+    const task = await rt.createTask('stale runner task');
+    const [result] = await rt.runTask(task.id);
+    await rt.deps.store.update(task.id, { status: 'running' });
+    await rt.deps.runStore!.update(result.run!, { status: 'running', acceptance: undefined });
+
+    await expect(rt.recoverRun(result.run!)).resolves.toMatchObject({ runId: result.run, taskId: task.id, releasedLeases: 0 });
+
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'ready' });
+    await expect(rt.deps.runStore!.get(result.run!)).resolves.toMatchObject({ status: 'deferred', error: expect.stringContaining('manually recovered') });
+  });
+
   it('reviews and accepts provider-neutral change sets for completed runs', async () => {
     const { rt, changeSet } = await makeRuntime();
     await rt.init('demo');

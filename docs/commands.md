@@ -312,6 +312,14 @@ Shows human-friendly durable run metadata including task, workspace, environment
 
 Summarizes the provider-neutral change set for a succeeded run. The runtime calls the configured `ChangeSetProvider`; the built-in Git worktree implementation reports changed files, diff stats, and name-status output from the run workspace.
 
+## `forge runs recover <id>`
+
+Recovers an interrupted or stale running run after you have verified no runner/container is alive. Forge marks the run `deferred`, releases any leases held by that task, and returns the task to `ready` so a later sweep can retry it. If the run still has active leases, pass `--force` to release them anyway.
+
+```bash
+forge runs recover 'release vcs' --force
+```
+
 ## `forge runs validate <id>`
 
 Runs provider-neutral validation gates for a succeeded run and records the validation results on the run record. Configure the built-in shell validation provider in `.forge/config.toml`:

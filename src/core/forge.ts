@@ -412,6 +412,22 @@ export class ForgeRuntime {
     return this.resolveRun(idOrPrefix);
   }
 
+  async recoverRun(idOrPrefix: string, options: { force?: boolean } = {}) {
+    if (!this.deps.runStore) throw new Error('No run store configured');
+    const run = await this.resolveRun(idOrPrefix);
+    if (run.status !== 'running' && !options.force) throw new Error(`Run ${run.id} is ${run.status}, not running; pass --force to recover anyway`);
+    const leaseProvider = this.leaseProvider();
+    const leases = leaseProvider?.status ? (await leaseProvider.status()).filter(entry => entry.taskId === run.taskId) : [];
+    if (leases.length && !options.force) throw new Error(`Run ${run.id} still has ${leases.length} active lease(s); pass --force if you verified no runner is alive`);
+    const byLease = new Map<string, typeof leases>();
+    for (const lease of leases) byLease.set(lease.id, [...(byLease.get(lease.id) ?? []), lease]);
+    if (leaseProvider) for (const [id, entries] of byLease) await leaseProvider.release({ providerId: leaseProvider.id, id, taskId: run.taskId, scopes: entries.map(entry => entry.scope), acquiredAt: entries[0].acquiredAt });
+    const now = new Date().toISOString();
+    await this.deps.runStore.update(run.id, { status: 'deferred', error: 'manually recovered: stale or interrupted runner', finishedAt: now });
+    await this.deps.store.update(run.taskId, { status: 'ready' });
+    return { runId: run.id, taskId: run.taskId, releasedLeases: leases.length };
+  }
+
   async reviewRun(idOrPrefix: string): Promise<ChangeSetSummary> {
     const run = await this.resolveRun(idOrPrefix);
     if (run.status !== 'succeeded') throw new Error(`Run ${run.id} is ${run.status}, not succeeded`);
