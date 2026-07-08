@@ -40,6 +40,13 @@ function parseForgeToml(input: string): Partial<ForgeConfig> {
       if (section === 'validation' && key === 'commands') config.validation = { ...config.validation, commands: values };
       continue;
     }
+    const booleanAssignment = line.match(/^([A-Za-z0-9_-]+)\s*=\s*(true|false)\s*$/);
+    if (booleanAssignment) {
+      const [, key, rawValue] = booleanAssignment;
+      const value = rawValue === 'true';
+      if (section === 'daemon' && key === 'syncAcceptedWork') config.daemon = { ...config.daemon, syncAcceptedWork: value };
+      continue;
+    }
     const assignment = line.match(/^([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*$/);
     if (!assignment) continue;
     const [, key, value] = assignment;

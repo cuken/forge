@@ -142,7 +142,8 @@ Runs a thin CLI loop around `ForgeRuntime.sweepWorkstream()`. Each sweep:
 1. Enqueues planned workstream items whose dependencies are done.
 2. Runs all ready tasks with bounded parallelism.
 3. In `--yolo` mode only, asks the configured spec provider to generate specs, approves specs, and accepts succeeded runs so the daemon can continue past human gates.
-4. Prints the same pending-human-actions summary as `forge status`.
+4. When daemon sync is enabled and the sweep accepted at least one run, runs configured `SyncProvider` tasks so accepted local state can be committed and pushed without a separate `forge sync`.
+5. Prints the same pending-human-actions summary as `forge status`.
 
 Options:
 
@@ -150,16 +151,18 @@ Options:
 - `--interval <seconds>` — delay between sweeps (default: 60)
 - `--parallel <count>` / `-p <count>` — ready-task parallelism for each sweep (default: 2)
 - `--yolo` — bypass human gates during each sweep: generate specs for `needs-spec` tasks with the configured `SpecProvider`, approve `awaiting-approval` specs, and accept succeeded `reviewing` runs after validation passes
+- `--sync` — after successful accepted YOLO work, run configured `SyncProvider` tasks (for example Git commit and push). The same behavior can be enabled persistently with `[daemon] syncAcceptedWork = true` in `.forge/config.toml` or `{ "daemon": { "syncAcceptedWork": true } }` in `.forge/config.json`.
 
 ```bash
 forge process --parallel 3
 forge process --once
 forge process --yolo --parallel 3
+forge process --yolo --sync --parallel 3
 ```
 
 Process output is optimized for watching long-running sweeps. Each line is prefixed with an `HH:MM:SS` timestamp, a fixed-width label (`sweep`, `task`, `workspace`, `runner`, `agent`, `lease`, `status`, or `wdo` for yolo work), and a small emoji. When stdout is a TTY, labels are colored unless `NO_COLOR` is set. Agent and runner output is relabeled as it streams so concurrent tasks are easier to scan.
 
-By default, the daemon never bypasses human gates: medium/large workstream items still stop at `needs-spec`, specs remain `awaiting-approval` until a human runs `forge task approve`, and completed runs remain `reviewing` until a human validates/reviews/accepts them. `--yolo` is the explicit opt-in escape hatch for trusted backlog burn-downs; validation gates still run before acceptance, and failed validation remains blocked. If the configured workstream provider is temporarily unavailable, Forge logs the provider error, still runs/accepts local ready or reviewing tasks, and includes `workstream unavailable` in the status summary. Press Ctrl-C to request graceful shutdown; Forge finishes the in-flight sweep, prints its summary, and exits before starting another sweep.
+By default, the daemon never bypasses human gates and does not sync after acceptance: medium/large workstream items still stop at `needs-spec`, specs remain `awaiting-approval` until a human runs `forge task approve`, and completed runs remain `reviewing` until a human validates/reviews/accepts them. `--yolo` is the explicit opt-in escape hatch for trusted backlog burn-downs; validation gates still run before acceptance, and failed validation remains blocked. `--sync` or `[daemon] syncAcceptedWork = true` only runs after accepted/empty acceptance results have already been persisted locally. If sync blocks or fails, Forge reports the sync error in the sweep summary and leaves the accepted run/task state intact so an operator can inspect state and rerun `forge sync` or the next daemon sweep. If the configured workstream provider is temporarily unavailable, Forge logs the provider error, still runs/accepts local ready or reviewing tasks, and includes `workstream unavailable` in the status summary. Press Ctrl-C to request graceful shutdown; Forge finishes the in-flight sweep, prints its summary, and exits before starting another sweep.
 
 ## `forge workstream plan <prompt...>`
 
