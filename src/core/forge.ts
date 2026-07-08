@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
 import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type ChangeSetSummary } from './changes.js';
+import { hasRunCleanup, hasWorkspaceCleanup, type CleanupResult } from './cleanup.js';
 import { hasTaskDiscovery, type TaskDiscoveryProvider } from './discovery.js';
 import { hasGate, type GateDecision, type GateDecisionKind, type GateProvider, type GateSubject, type PendingGateDecision } from './gate.js';
 import { hasDoctor, runChecks, type DoctorInput, type HealthCheckResult } from './health.js';
@@ -143,6 +144,20 @@ export class ForgeRuntime {
   async doctor(input: DoctorInput = {}): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks(input) : []);
     return runChecks(checks);
+  }
+
+  async cleanupRuns(input: { dryRun?: boolean; statuses?: RunRecord['status'][] } = {}): Promise<CleanupResult> {
+    const store = this.deps.runStore;
+    if (!store || !hasRunCleanup(store)) throw new Error('No run cleanup provider configured');
+    return store.cleanupRuns(input);
+  }
+
+  async cleanupWorkspaces(input: { dryRun?: boolean } = {}): Promise<CleanupResult> {
+    const provider = this.deps.workspace;
+    if (!hasWorkspaceCleanup(provider)) throw new Error('No workspace cleanup provider configured');
+    const tasks = await this.deps.store.list();
+    const runs = this.deps.runStore ? await this.deps.runStore.list() : [];
+    return provider.cleanupWorkspaces({ tasks, runs, dryRun: input.dryRun });
   }
 
   async isolationStatus(): Promise<IsolationStatus> {

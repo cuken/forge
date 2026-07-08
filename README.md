@@ -88,6 +88,8 @@ forge sync --dry-run
 forge process --yolo --sync --parallel 3
 forge lease status
 forge lease cleanup
+forge cleanup all
+forge cleanup all --apply
 forge workstream plan build a plugin system with docs and a sample plugin
 forge workstream import roadmap.json
 forge workstream list
