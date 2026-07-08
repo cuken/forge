@@ -22,7 +22,7 @@ The CLI does not know about Git, GitHub, or pi. It calls `ForgeRuntime.doctor()`
 Current checks:
 
 - `vcs.git`: git binary, repository, worktree support
-- selected isolation provider via `FORGE_ISOLATION=host|docker|podman`
+- selected isolation provider via `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml`
 - `agent.pi`: pi binary, pi version
 - `scm.github`: gh binary, gh auth, repo detection
 
@@ -32,12 +32,18 @@ Exit code is non-zero if any check fails. Warnings are printed but do not fail t
 
 Reports the selected isolation provider and readiness.
 
-Selection uses the same `FORGE_ISOLATION=host|docker|podman` configuration as task execution and `forge doctor`. Readiness is derived from checks declared by the selected isolation provider. Any failing check makes the command exit non-zero.
+Selection uses the same configuration as task execution and `forge doctor`: `FORGE_ISOLATION=host|docker|podman` takes precedence, then `.forge/config.toml` `[providers] isolation = "host"|"docker"|"podman"`, then the generated `.forge/config.json`, then `host`. Readiness is derived from checks declared by the selected isolation provider. Any failing check makes the command exit non-zero.
 
 Example:
 
+```toml
+# .forge/config.toml
+[providers]
+isolation = "podman"
+```
+
 ```bash
-FORGE_ISOLATION=podman forge isolation status
+forge isolation status
 ```
 
 Output includes the provider id, aggregate readiness (`pass`, `warn`, or `fail`), and provider check details.
@@ -145,7 +151,7 @@ For each ready task:
 
 1. Mark task `running`.
 2. Ask `WorkspaceProvider` to create a workspace.
-3. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman`. The host provider returns the worktree directly; container providers own setup hooks, readiness checks, command delivery, and cleanup details. The Podman provider can run agent commands through `podman exec` once its retrying readiness command passes.
+3. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml` `[providers] isolation = "host"|"docker"|"podman"`. The host provider returns the worktree directly; container providers own setup hooks, readiness checks, command delivery, and cleanup details. The Podman provider can run agent commands through `podman exec` once its retrying readiness command passes.
 4. Ask `AgentProvider` to run with task/workspace/environment context.
 5. Ask the isolation provider to clean up a prepared environment after the agent attempt.
 6. Append durable run output to `.forge/logs/<run-id>.log` while the agent runs.

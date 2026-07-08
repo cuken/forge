@@ -3,6 +3,8 @@ dist/
 .pi-subagents/
 .forge/tasks/
 .forge/specs/
+.forge/runs/
+.forge/logs/
 ../.forge-worktrees/
 .env
 .DS_Store

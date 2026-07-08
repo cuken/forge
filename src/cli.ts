@@ -12,13 +12,15 @@ import { HeuristicBuildPlannerProvider } from './providers/build-heuristic/index
 import { HostIsolationProvider } from './providers/isolation-host/index.js';
 import { DockerIsolationProvider } from './providers/isolation-docker/index.js';
 import { PodmanIsolationProvider } from './providers/isolation-podman/index.js';
+import { readForgeConfigSync } from './core/config.js';
 
-function isolationProvider() {
-  const requested = process.env.FORGE_ISOLATION ?? 'host';
-  if (requested === 'docker') return new DockerIsolationProvider();
-  if (requested === 'podman') return new PodmanIsolationProvider({ image: process.env.FORGE_PODMAN_IMAGE, readyCommand: process.env.FORGE_PODMAN_READY ? ['sh', '-lc', process.env.FORGE_PODMAN_READY] : undefined, readyAttempts: process.env.FORGE_PODMAN_READY_ATTEMPTS ? Number(process.env.FORGE_PODMAN_READY_ATTEMPTS) : undefined, mountPiConfig: process.env.FORGE_PODMAN_MOUNT_PI_CONFIG !== '0', piConfigPath: process.env.FORGE_PODMAN_PI_CONFIG });
-  if (requested === 'host') return new HostIsolationProvider();
-  throw new Error(`Unknown FORGE_ISOLATION '${requested}'. Expected host, docker, or podman.`);
+export function isolationProvider() {
+  const configured = readForgeConfigSync()?.providers?.isolation;
+  const requested = process.env.FORGE_ISOLATION ?? configured ?? 'host';
+  if (requested === 'docker' || requested === 'isolation.docker') return new DockerIsolationProvider();
+  if (requested === 'podman' || requested === 'isolation.podman') return new PodmanIsolationProvider({ image: process.env.FORGE_PODMAN_IMAGE, readyCommand: process.env.FORGE_PODMAN_READY ? ['sh', '-lc', process.env.FORGE_PODMAN_READY] : undefined, readyAttempts: process.env.FORGE_PODMAN_READY_ATTEMPTS ? Number(process.env.FORGE_PODMAN_READY_ATTEMPTS) : undefined, mountPiConfig: process.env.FORGE_PODMAN_MOUNT_PI_CONFIG !== '0', piConfigPath: process.env.FORGE_PODMAN_PI_CONFIG });
+  if (requested === 'host' || requested === 'isolation.host') return new HostIsolationProvider();
+  throw new Error(`Unknown isolation provider '${requested}'. Expected host, docker, podman, isolation.host, isolation.docker, or isolation.podman.`);
 }
 
 function runtime() {

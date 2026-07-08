@@ -58,6 +58,9 @@ FORGE_ISOLATION=docker forge doctor
 FORGE_ISOLATION=podman forge isolation status
 FORGE_ISOLATION=podman forge doctor
 FORGE_ISOLATION=podman FORGE_PODMAN_IMAGE=your-agent-image forge run toml
+# or set .forge/config.toml:
+# [providers]
+# isolation = "podman"
 forge sync --dry-run
 forge build update forge so that it honors toml files in the config instead of json config files
 forge task create "Add feature" --complexity small
