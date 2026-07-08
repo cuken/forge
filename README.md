@@ -27,6 +27,18 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - provider-neutral release records with version, lifecycle status, target metadata, and timestamps
 - work items can target exactly one planned release and show that target in task/status output
 
+## Targeted release workflow
+
+Forge models releases provider-neutrally while letting providers implement concrete review mechanics. A typical targeted release flow is:
+
+1. Create the release intent: `forge release create 1.2.3 --target-kind package --target-id forge-cli`.
+2. Target work to the planned release with `forge task create ... --release <release-id>` or `forge task update ... --release <release-id>`.
+3. Run agents normally with `forge task run-ready`; targeted tasks resolve the provider-owned release ref and build their worktrees from it.
+4. Review, validate, and accept run outputs as usual, merging accepted changes into the release working ref through the configured providers.
+5. Prepare the release for a human with `forge release prepare <release-id>`. Core asks a generic `ReleaseVcsProvider` for a review artifact and never assumes branch names or merges automatically.
+
+With the built-in GitHub provider, `forge release prepare` ensures the release branch exists (default `release/{version}`, configurable with `[github] releaseBranchTemplate`, based on `[github] releaseBaseBranch` or the repository default), stores the branch/ref and compare URL in release metadata, and prints manual review/merge next steps.
+
 ## Self-augmentation docs
 
 Forge follows the same self-description pattern as pi: keep a small core, document extension points, and let agents safely modify the system from inside the repo.
@@ -85,6 +97,9 @@ forge task spec <id> "# Spec..."
 forge approve toml
 forge run toml
 forge release create 1.2.3 --target-kind package --target-id forge-cli
+forge task create "Fix for 1.2.3" --release 1-2-3-package-forge-cli
+forge task run-ready
+forge runs accept <run-id>
 forge release prepare 1-2-3-package-forge-cli
 forge release list
 forge runs list

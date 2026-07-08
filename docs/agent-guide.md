@@ -52,6 +52,18 @@ When adding behavior, update at least one of:
 - `docs/architecture.md` for new core concepts
 - `AGENTS.md` for standing agent instructions
 
+## Working on targeted releases
+
+When a work item belongs to a release, preserve the provider-neutral flow:
+
+1. Find or create the release with `forge release create <version> --target-kind <kind> --target-id <id>`.
+2. Attach work with `forge task create ... --release <release-id>` or `forge task update ... --release <release-id>` while the release is still `planned`.
+3. Run work normally (`forge task run-ready` or `forge task run <id>`). Do not hardcode release branch names in specs, runtime changes, or docs; Forge asks `ReleaseVcsProvider` for the working ref and passes it into workspace creation.
+4. Validate and accept runs through the normal run-history commands.
+5. Use `forge release prepare <release-id>` only after targeted work is accepted. Treat its output as a human review/merge handoff, not an automatic merge or deployment.
+
+For GitHub-backed projects, the concrete provider creates/verifies a release branch from `[github] releaseBranchTemplate` (default `release/{version}`), bases it on `[github] releaseBaseBranch` or the repository default, and reports a compare URL for manual review. Keep GitHub-specific behavior in `src/providers/scm-github` and provider docs; core code and agent instructions should continue to speak in terms of release records, targets, refs, review artifacts, and provider next steps.
+
 ## Publishing workflow
 
 ```bash
