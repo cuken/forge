@@ -31,7 +31,7 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `WorkstreamProvider` — stores planned work items with dependencies and complexity for later task creation
 - `WorkstreamPlannerProvider` — plans workstream items from a prompt for `forge workstream plan`, relaying clarifying questions through the caller-supplied `ask` channel
 
-Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`.
+Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`. Provider-owned doctor checks should cover external/environmental prerequisites that the runtime cannot know about; for example, `change-set.git-worktree` verifies Git worktree metadata and `.git` pointer accessibility so `forge doctor` can flag container mounts that would make review/accept fail.
 
 ## Provider rules
 
