@@ -8,6 +8,7 @@ import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
+import type { NotificationProvider, RunNotificationInput } from '../src/core/notification.js';
 import { LeaseConflictError, type LeaseHandle, type LeaseProvider } from '../src/core/lease.js';
 import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
@@ -20,6 +21,8 @@ class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kin
 class MemoryValidation implements ValidationProvider, ForgeProvider { id='validation.memory'; kind='validation'; constructor(private status:'pass'|'fail'){} async validate(){ return [{ id: 'validation.memory:gate', status: this.status, message: this.status === 'pass' ? 'ok' : 'not ok' }]; } }
 class MemoryDiscovery implements TaskDiscoveryProvider, ForgeProvider { id='task-discovery.memory'; kind='task-discovery'; async discoverTask(input:{title:string}){ return { providerId: this.id, discoveredAt: '2026-01-01T00:00:00.000Z', resourceScopes: [{ kind: 'path' as const, value: `src/${input.title}.ts`, confidence: 'high' as const, reason: 'test scope' }] }; } }
 class MemoryLease implements LeaseProvider { id='lease.memory'; kind='lease' as const; acquired:string[]=[]; released:string[]=[]; async acquire(input:{task:Task}){ this.acquired.push(input.task.id); return { providerId: this.id, id: `lease-${input.task.id}`, taskId: input.task.id, scopes: input.task.discovery?.resourceScopes ?? [], acquiredAt: '2026-01-01T00:00:00.000Z' }; } async release(lease:LeaseHandle){ this.released.push(lease.taskId); } }
+class MemoryNotification implements NotificationProvider, ForgeProvider { id='notification.memory'; kind='notification'; events:RunNotificationInput[]=[]; async notifyRun(input:RunNotificationInput){ this.events.push(input); } }
+class BrokenNotification implements NotificationProvider, ForgeProvider { id='notification.broken'; kind='notification'; async notifyRun(){ throw new Error('notification backend unreachable'); } }
 
 async function makeRuntime(validation?: ValidationProvider & ForgeProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
@@ -40,6 +43,13 @@ async function makeRuntimeWithLease(lease: LeaseProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
   const agent = new MemoryAgent();
   const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet: new MemoryChangeSet(), lease });
+  return { rt, agent };
+}
+
+async function makeRuntimeWithNotification(notification: NotificationProvider & ForgeProvider) {
+  const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+  const agent = new MemoryAgent();
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet: new MemoryChangeSet(), notification });
   return { rt, agent };
 }
 
@@ -185,6 +195,35 @@ describe('Forge vertical slice', () => {
     expect(results[0].deferred).toBeUndefined();
     expect(agent.runs).toEqual([]);
     await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'failed' });
+  });
+
+  it('discovers notification capability providers for run lifecycle events', async () => {
+    const notification = new MemoryNotification();
+    const { rt } = await makeRuntimeWithNotification(notification);
+    await rt.init('demo');
+    const task = await rt.createTask('notified task');
+
+    const results = await rt.runTask(task.id);
+
+    expect(results[0]).toMatchObject({ task: task.id, result: { exitCode: 0 } });
+    expect(notification.events.map(event => event.event)).toEqual([
+      'run.started',
+      'run.workspace-created',
+      'run.environment-prepared',
+      'run.succeeded',
+    ]);
+    expect(notification.events[0]).toMatchObject({ task: { id: task.id }, run: { taskId: task.id }, message: expect.stringContaining('started task') });
+  });
+
+  it('ignores providers without notification support and best-effort notification failures', async () => {
+    const { rt } = await makeRuntimeWithNotification(new BrokenNotification());
+    await rt.init('demo');
+    const task = await rt.createTask('notification failure task');
+
+    const results = await rt.runTask(task.id);
+
+    expect(results[0]).toMatchObject({ task: task.id, result: { exitCode: 0 } });
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'reviewing' });
   });
 
   it('persists run records and captured logs', async () => {
