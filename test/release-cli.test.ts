@@ -38,6 +38,8 @@ describe('release CLI commands', () => {
 
     const listed = await runForge(['task', 'list']);
     expect(listed).toContain('\trelease=2-0-0-package-forge');
+    const release = JSON.parse(await runForge(['release', 'show', '2-0-0-package-forge']));
+    expect(release.status).toBe('active');
 
     await runForge(['release', 'create', '2.0.1', '--target-kind', 'package', '--target-id', 'forge']);
     const updated = await runForge(['task', 'update', 'release fix', '--release', '2-0-1-package-forge']);
@@ -52,7 +54,7 @@ describe('release CLI commands', () => {
     const listed = await runForge(['release', 'list']);
     expect(listed).toContain('1-2-3-package-forge\tplanned\t1.2.3\tpackage:forge\t');
 
-    const filteredOut = await runForge(['release', 'list', '--status', 'released']);
+    const filteredOut = await runForge(['release', 'list', '--status', 'completed']);
     expect(filteredOut).toBe('');
 
     const shown = JSON.parse(await runForge(['release', 'show', '1-2-3-package-forge']));

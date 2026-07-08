@@ -91,7 +91,7 @@ export interface RunStore extends ForgeProvider {
   readLog(id: string): Promise<string>;
 }
 
-export type ReleaseStatus = 'planned' | 'preparing' | 'ready' | 'released' | 'failed' | 'canceled';
+export type ReleaseStatus = 'planned' | 'active' | 'ready' | 'completed';
 
 export interface ReleaseTarget {
   kind: string;
@@ -109,9 +109,8 @@ export interface ReleaseRecord {
   updatedAt: string;
   scheduledAt?: string;
   startedAt?: string;
-  releasedAt?: string;
-  failedAt?: string;
-  canceledAt?: string;
+  readyAt?: string;
+  completedAt?: string;
   notes?: string;
   metadata?: Record<string, Json>;
 }

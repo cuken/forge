@@ -62,9 +62,23 @@ export class ForgeRuntime {
       .replace(/^-+|-+$/g, '') || `release-${Date.now()}`;
   }
 
+  private readonly releaseTransitions: Record<ReleaseStatus, ReleaseStatus[]> = {
+    planned: ['active'],
+    active: ['ready'],
+    ready: ['completed'],
+    completed: [],
+  };
+
+  private assertReleaseStatus(status: string): asserts status is ReleaseStatus {
+    if (!['planned', 'active', 'ready', 'completed'].includes(status)) throw new Error(`Invalid release status: ${status}`);
+  }
+
   async createRelease(input: { version: string; target: ReleaseRecord['target']; status?: ReleaseStatus; id?: string; scheduledAt?: string; notes?: string; metadata?: ReleaseRecord['metadata'] }): Promise<ReleaseRecord> {
+    const status = input.status ?? 'planned';
+    this.assertReleaseStatus(status);
+    if (status !== 'planned') throw new Error(`Release creation starts at planned, not ${status}`);
     const id = input.id ?? this.releaseId(input.version, input.target);
-    return this.releaseStore().create({ id, version: input.version, status: input.status ?? 'planned', target: input.target, scheduledAt: input.scheduledAt, notes: input.notes, metadata: input.metadata });
+    return this.releaseStore().create({ id, version: input.version, status, target: input.target, scheduledAt: input.scheduledAt, notes: input.notes, metadata: input.metadata });
   }
 
   async getRelease(id: string): Promise<ReleaseRecord | null> {
@@ -76,7 +90,21 @@ export class ForgeRuntime {
   }
 
   async updateRelease(id: string, patch: Partial<ReleaseRecord>): Promise<ReleaseRecord> {
+    if (!patch.status) return this.releaseStore().update(id, patch);
+    this.assertReleaseStatus(patch.status);
+    const release = await this.releaseStore().get(id);
+    if (!release) throw new Error(`Release not found: ${id}`);
+    if (patch.status === release.status) return this.releaseStore().update(id, patch);
+    if (!this.releaseTransitions[release.status].includes(patch.status)) throw new Error(`Invalid release transition: ${release.status} -> ${patch.status}`);
     return this.releaseStore().update(id, patch);
+  }
+
+  private async activateReleaseForTargetedWork(id: string): Promise<ReleaseRecord> {
+    const release = await this.releaseStore().get(id);
+    if (!release) throw new Error(`Release not found: ${id}`);
+    if (release.status === 'planned') return this.updateRelease(id, { status: 'active', startedAt: new Date().toISOString() });
+    if (release.status === 'active') return release;
+    throw new Error(`Release ${id} is ${release.status}, not planned or active`);
   }
 
   private releaseVcsProvider(): ReleaseVcsProvider & ForgeProvider {
@@ -97,15 +125,17 @@ export class ForgeRuntime {
   async prepareRelease(id: string): Promise<PrepareReleaseResult> {
     const release = await this.releaseStore().get(id);
     if (!release) throw new Error(`Release not found: ${id}`);
-    if (release.status !== 'planned' && release.status !== 'preparing') throw new Error(`Release ${id} is ${release.status}, not planned or preparing`);
+    if (release.status !== 'planned' && release.status !== 'active') throw new Error(`Release ${id} is ${release.status}, not planned or active`);
     const provider = this.releaseVcsProvider();
-    const preparing = release.status === 'preparing' ? release : await this.releaseStore().update(id, { status: 'preparing', startedAt: new Date().toISOString() });
-    const target = await provider.ensureReleaseTarget({ release: preparing });
-    const ref = await provider.resolveReleaseRef({ release: preparing, target });
-    const review = await provider.prepareReleaseReview({ release: preparing, target, ref });
-    const nextStatus: ReleaseStatus = review.status === 'ready' ? 'ready' : 'preparing';
+    const active = release.status === 'active' ? release : await this.updateRelease(id, { status: 'active', startedAt: new Date().toISOString() });
+    const target = await provider.ensureReleaseTarget({ release: active });
+    const ref = await provider.resolveReleaseRef({ release: active, target });
+    const review = await provider.prepareReleaseReview({ release: active, target, ref });
+    const nextStatus: ReleaseStatus = review.status === 'ready' ? 'ready' : 'active';
     const releaseVcsMetadata = JSON.parse(JSON.stringify({ providerId: provider.id, target, ref, review }));
-    const updated = await this.releaseStore().update(id, { status: nextStatus, metadata: { ...(preparing.metadata ?? {}), releaseVcs: releaseVcsMetadata } });
+    const updated = nextStatus === active.status
+      ? await this.releaseStore().update(id, { metadata: { ...(active.metadata ?? {}), releaseVcs: releaseVcsMetadata } })
+      : await this.updateRelease(id, { status: nextStatus, readyAt: new Date().toISOString(), metadata: { ...(active.metadata ?? {}), releaseVcs: releaseVcsMetadata } });
     return { release: updated, target, ref, review };
   }
 
@@ -377,9 +407,7 @@ export class ForgeRuntime {
 
   private async resolvePlannedReleaseTarget(releaseId?: string): Promise<Task['targetRelease'] | undefined> {
     if (!releaseId) return undefined;
-    const release = await this.releaseStore().get(releaseId);
-    if (!release) throw new Error(`Release not found: ${releaseId}`);
-    if (release.status !== 'planned') throw new Error(`Release ${releaseId} is ${release.status}, not planned`);
+    const release = await this.activateReleaseForTargetedWork(releaseId);
     return { id: release.id, version: release.version };
   }
 

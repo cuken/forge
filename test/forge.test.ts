@@ -108,14 +108,26 @@ describe('Forge vertical slice', () => {
     await rt.init('demo');
 
     const release = await rt.createRelease({ version: '1.2.3', target: { kind: 'package', id: 'forge-cli', name: 'Forge CLI', metadata: { runtime: 'node' } }, scheduledAt: '2026-02-01T00:00:00.000Z', notes: 'first-class release state' });
+    const active = await rt.updateRelease(release.id, { status: 'active' });
     const ready = await rt.updateRelease(release.id, { status: 'ready' });
 
     expect(release).toMatchObject({ id: '1-2-3-package-forge-cli', version: '1.2.3', status: 'planned', target: { kind: 'package', id: 'forge-cli', name: 'Forge CLI' } });
+    expect(active.status).toBe('active');
     expect(Date.parse(ready.updatedAt)).toBeGreaterThanOrEqual(Date.parse(release.updatedAt));
     await expect(rt.getRelease(release.id)).resolves.toMatchObject({ version: '1.2.3', status: 'ready', target: { metadata: { runtime: 'node' } } });
     await expect(rt.listReleases({ status: 'ready' })).resolves.toHaveLength(1);
     await expect(rt.listReleases({ targetKind: 'environment' })).resolves.toEqual([]);
     await expect(readFile(join(root, '.forge', 'releases', `${release.id}.json`), 'utf8')).resolves.toContain('first-class release state');
+  });
+
+  it('rejects invalid release lifecycle transitions', async () => {
+    const { rt } = await makeRuntime();
+    await rt.init('demo');
+    const release = await rt.createRelease({ version: '1.0.0', target: { kind: 'package', id: 'forge' } });
+
+    await expect(rt.updateRelease(release.id, { status: 'ready' })).rejects.toThrow('Invalid release transition: planned -> ready');
+    await rt.updateRelease(release.id, { status: 'active' });
+    await expect(rt.updateRelease(release.id, { status: 'completed' })).rejects.toThrow('Invalid release transition: active -> completed');
   });
 
   it('discovers a generic release VCS capability and prepares a release for review', async () => {
@@ -132,7 +144,7 @@ describe('Forge vertical slice', () => {
     await expect(rt.getRelease(release.id)).resolves.toMatchObject({ status: 'ready', metadata: { releaseVcs: { providerId: 'vcs.memory', ref: { ref: 'release/2.0.0' }, review: { nextSteps: ['open review URL', 'merge manually after approval'] } } } });
   });
 
-  it('keeps blocked release preparation in preparing status and reports work items', async () => {
+  it('keeps blocked release preparation in active status and reports work items', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
     const vcs = new BlockedReleaseVcs();
     const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), releaseStore: new FileReleaseStore(root), vcs, workspace: new MemoryWorkspace(), agent: new MemoryAgent() });
@@ -140,8 +152,8 @@ describe('Forge vertical slice', () => {
     const release = await rt.createRelease({ version: '2.1.0', target: { kind: 'package', id: 'forge' } });
     const result = await rt.prepareRelease(release.id);
 
-    expect(result).toMatchObject({ release: { status: 'preparing' }, review: { status: 'blocked', blockingItems: ['2 tasks still awaiting acceptance'], nextSteps: ['accept or remove blocking tasks'] } });
-    await expect(rt.getRelease(release.id)).resolves.toMatchObject({ status: 'preparing', metadata: { releaseVcs: { review: { status: 'blocked', blockingItems: ['2 tasks still awaiting acceptance'] } } } });
+    expect(result).toMatchObject({ release: { status: 'active' }, review: { status: 'blocked', blockingItems: ['2 tasks still awaiting acceptance'], nextSteps: ['accept or remove blocking tasks'] } });
+    await expect(rt.getRelease(release.id)).resolves.toMatchObject({ status: 'active', metadata: { releaseVcs: { review: { status: 'blocked', blockingItems: ['2 tasks still awaiting acceptance'] } } } });
   });
 
   it('validates and persists one planned release target on task create and update', async () => {
@@ -157,9 +169,11 @@ describe('Forge vertical slice', () => {
     const updated = await rt.updateTask(created.id, { targetReleaseId: next.id });
     expect(updated.targetRelease).toEqual({ id: next.id, version: '1.2.4' });
 
-    await rt.updateRelease(next.id, { status: 'released' });
+    await rt.updateRelease(next.id, { status: 'active' });
+    await rt.updateRelease(next.id, { status: 'ready' });
+    await rt.updateRelease(next.id, { status: 'completed' });
     await expect(rt.createTask('bad release task', { targetReleaseId: 'missing' })).rejects.toThrow('Release not found');
-    await expect(rt.updateTask(created.id, { targetReleaseId: next.id })).rejects.toThrow('not planned');
+    await expect(rt.updateTask(created.id, { targetReleaseId: next.id })).rejects.toThrow('not planned or active');
   });
 
   it('starts release-targeted workspaces from the provider-resolved release ref only for targeted tasks', async () => {

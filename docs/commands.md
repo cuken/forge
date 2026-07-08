@@ -194,21 +194,19 @@ Options:
 - `--target-kind <kind>` — target category, such as `package`, `service`, or `environment`
 - `--target-id <id>` — stable target identifier
 - `--target-name <name>` — optional display name
-- `--status <status>` — initial lifecycle status (default: `planned`)
+- `--status <status>` — initial lifecycle status; only `planned` is valid at creation (default: `planned`)
 - `--notes <notes>` — release notes or planning notes
 
 Release lifecycle vocabulary:
 
-- `planned` — release intent exists but preparation has not started
-- `preparing` — release work is in progress
-- `ready` — release has passed local gates and is ready for external delivery
-- `released` — delivery completed
-- `failed` — release attempt failed
-- `canceled` — release intent was abandoned
+- `planned` — release intent exists but no release-targeted work has started
+- `active` — at least one task has targeted the release, or release preparation has started
+- `ready` — Forge prepared the provider-owned review artifact and no blocking work was reported
+- `completed` — a human has finished the external merge/release decision and marked the record complete
 
-`forge release status <id> <status>` updates the status and records status-specific timestamps for `preparing`, `released`, `failed`, and `canceled`. `forge release list` supports `--status` and `--target-kind`; `forge release show <id>` prints the persisted JSON record.
+Valid transitions are `planned -> active -> ready -> completed`; Forge rejects skips and backwards moves. Creating or updating a task with `--release <id>` automatically advances a `planned` release to `active`. `forge release status <id> <status>` can advance one step and records timestamps for `active`, `ready`, and `completed`; `forge release complete <id>` is a convenience command for the final `ready -> completed` step. `forge release list` supports `--status` and `--target-kind`; `forge release show <id>` prints the persisted JSON record.
 
-`forge release prepare <id>` calls the configured generic `ReleaseVcsProvider` to ensure the release target exists, resolve the provider-owned working ref, and prepare a human review artifact. Forge does not assume branch names or code-host behavior and never merges automatically. Providers return readiness (`ready` or `blocked`), blocking work items, optional review URLs, and provider-specific next steps; Forge stores those details in release metadata and moves the release to `ready` only when preparation succeeds. Blocked preparation leaves the release in `preparing` so humans can resolve the listed items and rerun the command. With `scm.github`, `[github] releaseBranchTemplate` derives the branch from `{id}`, `{version}`, `{target.kind}`, and `{target.id}` (default `release/{version}`), `[github] releaseBaseBranch` controls the source branch when Forge needs to create it, and output points humans to the compare view for manual review/merge.
+`forge release prepare <id>` calls the configured generic `ReleaseVcsProvider` to ensure the release target exists, resolve the provider-owned working ref, and prepare a human review artifact. Forge does not assume branch names or code-host behavior and never merges automatically. Providers return readiness (`ready` or `blocked`), blocking work items, optional review URLs, and provider-specific next steps; Forge stores those details in release metadata and moves the release to `ready` only when preparation succeeds. Blocked preparation leaves the release `active` so humans can resolve the listed items and rerun the command. Humans remain responsible for reviewing, merging, publishing, deploying, and then running `forge release complete <id>` after those decisions are done. With `scm.github`, `[github] releaseBranchTemplate` derives the branch from `{id}`, `{version}`, `{target.kind}`, and `{target.id}` (default `release/{version}`), `[github] releaseBaseBranch` controls the source branch when Forge needs to create it, and output points humans to the compare view for manual review/merge.
 
 ## `forge task create <title>`
 
