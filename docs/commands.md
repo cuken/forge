@@ -207,7 +207,7 @@ Release lifecycle vocabulary:
 
 `forge release status <id> <status>` updates the status and records status-specific timestamps for `preparing`, `released`, `failed`, and `canceled`. `forge release list` supports `--status` and `--target-kind`; `forge release show <id>` prints the persisted JSON record.
 
-`forge release prepare <id>` calls the configured generic `ReleaseVcsProvider` to ensure the release target exists, resolve the provider-owned working ref, and prepare a human review artifact. Forge does not assume branch names or code-host behavior; providers return the ref/review details and Forge stores them in release metadata while moving the release to `ready` when preparation succeeds.
+`forge release prepare <id>` calls the configured generic `ReleaseVcsProvider` to ensure the release target exists, resolve the provider-owned working ref, and prepare a human review artifact. Forge does not assume branch names or code-host behavior; providers return the ref/review details and Forge stores them in release metadata while moving the release to `ready` when preparation succeeds. With `scm.github`, `[github] releaseBranchTemplate` derives the branch from `{id}`, `{version}`, `{target.kind}`, and `{target.id}` (default `release/{version}`), and `[github] releaseBaseBranch` controls the source branch when Forge needs to create it.
 
 ## `forge task create <title>`
 

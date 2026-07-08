@@ -46,7 +46,7 @@ export interface ForgeConfig {
     notification?: string;
   };
   pi?: { command: string; args: string[] };
-  github?: { owner?: string; repo?: string };
+  github?: { owner?: string; repo?: string; releaseBranchTemplate?: string; releaseBaseBranch?: string };
   linear?: { teamKey?: string; project?: string };
   validation?: { commands: string[] };
   notifications?: { channel?: string };

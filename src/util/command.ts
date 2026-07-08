@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+export type CommandResult = { exitCode: number; stdout: string; stderr: string };
+
 export async function commandExists(command: string): Promise<boolean> {
   const result = process.platform === 'win32'
     ? await runCommand('where', [command])
@@ -8,7 +10,7 @@ export async function commandExists(command: string): Promise<boolean> {
 }
 
 export async function runCommand(command: string, args: string[] = [], options: { cwd?: string; shell?: boolean } = {}) {
-  return await new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+  return await new Promise<CommandResult>((resolve) => {
     const child = spawn(command, args, { cwd: options.cwd, shell: options.shell, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', d => stdout += d.toString());
