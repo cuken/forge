@@ -21,6 +21,8 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - provider-neutral validation gates before accepting completed runs
 - optional parallel dispatch for multiple ready tasks
 - filesystem resource-scope lease provider with stale cleanup for coordinating parallel Forge processes
+- provider-neutral workstream backlog import/list/enqueue flow backed by filesystem JSON
+- interactive workstream planning through a generic planner provider (pi-backed interview by default)
 
 ## Self-augmentation docs
 
@@ -67,6 +69,10 @@ FORGE_ISOLATION=podman FORGE_PODMAN_IMAGE=your-agent-image forge run toml
 forge sync --dry-run
 forge lease status
 forge lease cleanup
+forge workstream plan build a plugin system with docs and a sample plugin
+forge workstream import roadmap.json
+forge workstream list
+forge workstream enqueue
 forge build update forge so that it honors toml files in the config instead of json config files
 forge task create "Add feature" --complexity small
 forge task create "Risky feature" --complexity medium

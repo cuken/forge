@@ -6,6 +6,7 @@ dist/
 .forge/runs/
 .forge/logs/
 .forge/leases/
+.forge/workstream.json
 ../.forge-worktrees/
 .env
 .DS_Store

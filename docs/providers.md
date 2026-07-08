@@ -16,6 +16,8 @@ Defined in `src/core/types.ts`:
 - `ValidationProvider` — run provider-neutral gates before completed runs are accepted
 - `TaskDiscoveryProvider` — attach provider-neutral discovery metadata, including likely task resource scopes, when tasks are created
 - `LeaseProvider` — acquire and release provider-neutral resource scope leases around task runs
+- `WorkstreamProvider` — import and list provider-neutral roadmap/workstream backlog items before they are enqueued as Forge tasks
+- `WorkstreamPlannerProvider` — turn a natural-language goal into workstream items, optionally asking clarifying questions through a generic channel
 
 ## Current optional capabilities
 
@@ -26,6 +28,8 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `BuildPlannerProvider` — converts natural-language build requests into task/spec/run plans for `forge build`
 - `TaskDiscoveryProvider` — discovers likely resource scopes for task metadata; the runtime calls it structurally during task creation
 - `LeaseProvider` — leases discovered resource scopes before workspace/isolation/agent execution and releases them after the run completes or fails
+- `WorkstreamProvider` — stores planned work items with dependencies and complexity for later task creation
+- `WorkstreamPlannerProvider` — plans workstream items from a prompt for `forge workstream plan`, relaying clarifying questions through the caller-supplied `ask` channel
 
 Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`.
 
@@ -102,12 +106,30 @@ Built-in implementations:
 
 Future implementations can back the same interface with Redis, SCM checks, or remote schedulers.
 
+## Workstreams
+
+`WorkstreamProvider` lets Forge ingest planned roadmap items without coupling core to a tracker, spreadsheet, or planning system. Items have provider-neutral `id`, `title`, optional `description`, `dependencies`, `complexity`, a `status` (`planned` or `queued`), and a `taskId` linking a queued item to its Forge task. The contract is `import`/`list`/`update`; the runtime owns enqueue semantics (dependency gating, dedupe) and calls `update` to record queue state, so providers only persist items.
+
+`ForgeRuntime.enqueueWorkstream()` turns eligible planned items into tasks through `createTask()`, so the same complexity gates, discovery metadata, and future create-task behavior apply. An item is eligible when every dependency's linked task is `done`; explicit ids bypass gating but never re-queue.
+
+Built-in implementation: `workstream.filesystem`, which imports JSON arrays or `{ "items": [...] }` documents and stores normalized backlog state in `.forge/workstream.json`, preserving queued status/task links when a roadmap is re-imported. Future implementations can back the same interface with Linear, GitHub Issues, Jira, or any tracker that can represent titled items with dependencies — the runtime never sees tracker-specific concepts.
+
+## Workstream planning
+
+`WorkstreamPlannerProvider` turns a natural-language goal into draft workstream items without coupling core to any particular agent or planning tool. The contract is one method, `planWorkstream({ prompt, context, ask? })`. The optional `ask` callback is a generic clarification channel: the provider decides what to ask and when, while the caller decides how a human answers (the CLI uses terminal prompts; another host could use a web form or chat). When `ask` is absent the provider must plan without questions.
+
+`ForgeRuntime.planWorkstream()` supplies project context from `.forge/context/project-summary.md`, merges the returned drafts into the existing backlog without touching queued items, and renames colliding ids (remapping intra-plan dependencies).
+
+Built-in implementation: `workstream-planner.pi`, which runs the configured pi command twice — once to elicit at most four clarifying questions as JSON, once (with the answers) to produce the plan JSON. It parses JSON leniently from chatty agent output and normalizes complexity to the standard `trivial|small|medium|large` gates. Future implementations can wrap other agents, planning services, or fully deterministic templates.
+
 ## Current implementations
 
 - `src/providers/build-heuristic` estimates request complexity and drafts specs for complex tasks.
 - `src/providers/discovery-heuristic` attaches heuristic task discovery metadata and resource scopes to newly-created tasks.
 - `src/providers/lease-memory` implements `LeaseProvider` with in-memory scope locks for the current Forge process.
 - `src/providers/lease-filesystem` implements cross-process `LeaseProvider` locks in `.forge/leases` with stale lease cleanup and status reporting.
+- `src/providers/workstream-filesystem` implements `WorkstreamProvider` by importing/listing normalized backlog JSON in `.forge/workstream.json`.
+- `src/providers/planner-pi` implements `WorkstreamPlannerProvider` by interviewing through pi and emitting dependency-ordered workstream drafts.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task and provides `change-set.git-worktree` for reviewing changed files and accepting run branches back into the project checkout. New configs record this provider as `providers.changeSet`.

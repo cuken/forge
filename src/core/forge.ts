@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
 import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type ChangeSetSummary } from './changes.js';
@@ -9,11 +9,12 @@ import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } fr
 import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
+import { hasWorkstream, hasWorkstreamPlanner, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
 import type { AgentProvider, ForgeConfig, ForgeProvider, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -21,13 +22,13 @@ export class ForgeRuntime {
     await this.deps.vcs.init();
     await this.deps.store.init();
     await this.deps.runStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner].filter(Boolean); }
 
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
@@ -87,6 +88,82 @@ export class ForgeRuntime {
     const runResults = await this.runReady(task.id, observer);
     const current = await this.deps.store.get(task.id);
     return { task: current ?? task, plan, action: 'ran', runResults };
+  }
+
+  private workstreamProvider(): WorkstreamProvider {
+    const provider = this.providers().find(provider => hasWorkstream(provider));
+    if (!provider || !hasWorkstream(provider)) throw new Error('No workstream provider configured');
+    return provider;
+  }
+
+  async importWorkstream(path?: string): Promise<WorkstreamItem[]> {
+    return this.workstreamProvider().import({ path });
+  }
+
+  async planWorkstream(input: { prompt: string; ask?: (question: string) => Promise<string> }): Promise<{ plan: WorkstreamPlan; added: WorkstreamItem[] }> {
+    const planner = this.providers().find(provider => hasWorkstreamPlanner(provider));
+    if (!planner || !hasWorkstreamPlanner(planner)) throw new Error('No workstream planner provider configured');
+    const provider = this.workstreamProvider();
+    const plan = await planner.planWorkstream({ prompt: input.prompt, context: await this.projectContext(), ask: input.ask });
+    const existing = await provider.list();
+    const taken = new Set(existing.map(item => item.id));
+    // Planned ids may collide with backlog items from earlier plans; rename and keep
+    // intra-plan dependency references pointing at the renamed items.
+    const rename = new Map<string, string>();
+    const drafts = plan.items.map((item, index) => {
+      const base = item.id?.trim() || `item-${index + 1}`;
+      let id = base;
+      for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+      taken.add(id);
+      if (id !== base) rename.set(base, id);
+      return { ...item, id };
+    }).map(item => ({ ...item, dependencies: (item.dependencies ?? []).map(dep => rename.get(dep) ?? dep) }));
+    const merged = await provider.import({ items: [...existing, ...drafts] });
+    const addedIds = new Set(drafts.map(draft => draft.id));
+    return { plan, added: merged.filter(item => addedIds.has(item.id)) };
+  }
+
+  private async projectContext(): Promise<string | undefined> {
+    try { return await readFile(join(this.root, '.forge', 'context', 'project-summary.md'), 'utf8'); } catch { return undefined; }
+  }
+
+  async listWorkstream(): Promise<WorkstreamItem[]> {
+    return this.workstreamProvider().list();
+  }
+
+  async enqueueWorkstream(ids?: string[]): Promise<Task[]> {
+    const provider = this.workstreamProvider();
+    const items = await provider.list();
+    const wanted = ids?.length ? new Set(ids) : undefined;
+    if (wanted) {
+      const known = new Set(items.map(item => item.id));
+      const missing = [...wanted].filter(id => !known.has(id));
+      if (missing.length) throw new Error(`No workstream item '${missing.join("', '")}'`);
+    }
+    const byId = new Map(items.map(item => [item.id, item]));
+    const dependencyDone = async (depId: string) => {
+      const dep = byId.get(depId);
+      if (!dep) return true;
+      if (dep.status !== 'queued' || !dep.taskId) return false;
+      return (await this.deps.store.get(dep.taskId))?.status === 'done';
+    };
+    const tasks: Task[] = [];
+    for (const item of items) {
+      if (wanted && !wanted.has(item.id)) continue;
+      if (item.status === 'queued') continue;
+      // Explicitly-named items bypass dependency gating so a user can force order; the
+      // default sweep only queues items whose dependencies have finished as done tasks.
+      if (!wanted && !(await Promise.all(item.dependencies.map(dependencyDone))).every(Boolean)) continue;
+      const task = await this.createTask(item.title, { description: this.workstreamDescription(item), complexity: item.complexity });
+      await provider.update(item.id, { status: 'queued', taskId: task.id });
+      tasks.push(task);
+    }
+    return tasks;
+  }
+
+  private workstreamDescription(item: WorkstreamItem): string | undefined {
+    const lines = [item.description, item.dependencies.length ? `Dependencies: ${item.dependencies.join(', ')}` : undefined, `Workstream item: ${item.id}`].filter(Boolean);
+    return lines.length ? lines.join('\n\n') : undefined;
   }
 
   async createTask(title: string, options: { description?: string; complexity?: Task['complexity']; createIssue?: boolean } = {}) {

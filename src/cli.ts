@@ -18,6 +18,9 @@ import { ShellValidationProvider } from './providers/validation-shell/index.js';
 import { HeuristicTaskDiscoveryProvider } from './providers/discovery-heuristic/index.js';
 import { MemoryLeaseProvider } from './providers/lease-memory/index.js';
 import { FileLeaseProvider } from './providers/lease-filesystem/index.js';
+import { FileWorkstreamProvider } from './providers/workstream-filesystem/index.js';
+import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
+import { createInterface } from 'node:readline/promises';
 
 export function isolationProvider() {
   const configured = readForgeConfigSync()?.providers?.isolation;
@@ -38,9 +41,13 @@ function runtime() {
   if (requestedDiscovery && requestedDiscovery !== 'heuristic' && requestedDiscovery !== 'task-discovery.heuristic') throw new Error(`Unknown task discovery provider '${requestedDiscovery}'. Expected heuristic or task-discovery.heuristic.`);
   const requestedLease = config?.providers?.lease;
   if (requestedLease && !['memory', 'lease.memory', 'filesystem', 'lease.filesystem'].includes(requestedLease)) throw new Error(`Unknown lease provider '${requestedLease}'. Expected memory, filesystem, lease.memory, or lease.filesystem.`);
+  const requestedWorkstream = config?.providers?.workstream;
+  if (requestedWorkstream && requestedWorkstream !== 'filesystem' && requestedWorkstream !== 'workstream.filesystem') throw new Error(`Unknown workstream provider '${requestedWorkstream}'. Expected filesystem or workstream.filesystem.`);
+  const requestedPlanner = config?.providers?.workstreamPlanner;
+  if (requestedPlanner && requestedPlanner !== 'pi' && requestedPlanner !== 'workstream-planner.pi') throw new Error(`Unknown workstream planner provider '${requestedPlanner}'. Expected pi or workstream-planner.pi.`);
   const staleAfterMs = process.env.FORGE_LEASE_STALE_AFTER_MS ? Number(process.env.FORGE_LEASE_STALE_AFTER_MS) : undefined;
   const lease = requestedLease === 'filesystem' || requestedLease === 'lease.filesystem' ? new FileLeaseProvider(process.cwd(), staleAfterMs) : new MemoryLeaseProvider();
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease });
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream: new FileWorkstreamProvider(), workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) });
 }
 
 const program = new Command();
@@ -97,6 +104,32 @@ lease.command('status').description('List active resource leases after stale cle
 lease.command('cleanup').description('Remove stale resource leases').action(async () => {
   const removed = await runtime().cleanupLeases();
   console.log(`removed ${removed} stale lease(s)`);
+});
+
+const workstream = program.command('workstream').description('Manage provider-neutral workstream backlog items');
+workstream.command('plan <prompt...>').description('Define a workstream with the configured planner provider, answering its clarifying questions').option('--no-questions', 'plan without clarifying questions').action(async (promptParts: string[], opts) => {
+  const rl = opts.questions === false ? undefined : createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const ask = rl ? async (question: string) => (await rl.question(`\n? ${question}\n> `)).trim() : undefined;
+    const { plan, added } = await runtime().planWorkstream({ prompt: promptParts.join(' '), ask });
+    if (plan.summary) console.log(`\n${plan.summary}`);
+    for (const item of added) console.log(`${item.id}\t${item.complexity}\tdeps=${item.dependencies.join(',') || '-'}\t${item.title}`);
+    console.log(`\nadded ${added.length} item(s). Next: forge workstream enqueue, then forge task run-ready --parallel <n>`);
+  } finally {
+    rl?.close();
+  }
+});
+workstream.command('import [path]').description('Import roadmap workstream items from a JSON file into the configured provider').action(async path => {
+  const items = await runtime().importWorkstream(path);
+  console.log(`imported ${items.length} workstream item(s)`);
+});
+workstream.command('list').description('List imported workstream backlog items').action(async () => {
+  for (const item of await runtime().listWorkstream()) console.log(`${item.id}\t${item.status}\t${item.complexity}\tdeps=${item.dependencies.join(',') || '-'}\t${item.title}${item.taskId ? `\ttask=${item.taskId}` : ''}`);
+});
+workstream.command('enqueue [ids...]').description('Create Forge tasks from planned workstream items whose dependencies are done; pass ids to force specific items').action(async ids => {
+  const tasks = await runtime().enqueueWorkstream(ids);
+  if (!tasks.length) console.log('no eligible planned items (already queued, or waiting on dependencies)');
+  for (const task of tasks) console.log(`${task.id} ${task.status} ${task.title}`);
 });
 
 program.command('build <request...>').alias('b').description('Plan a natural-language build task and run the Forge flow').option('--name <name>', 'hard-define task title').option('--pattern <pattern>', 'provider-specific task matching pattern').option('--auto-approve', 'approve generated specs without stopping').option('--no-run', 'create/plan task without running implementation').action(async (request: string[], opts) => {

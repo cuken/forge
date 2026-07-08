@@ -123,6 +123,21 @@ commands = ["npm ci", "npm test", "npm run build"]
   - `forge lease cleanup`
 - `forge task run-ready --parallel N` acquires/retries/releases leases around task runs.
 
+### Workstreams (added 2026-07-07)
+
+- `WorkstreamProvider` stores a provider-neutral backlog of planned roadmap items (`id`, `title`, `description`, `dependencies`, `complexity`, `status planned|queued`, `taskId` link). Contract is `import`/`list`/`update`; the runtime owns enqueue semantics.
+- `WorkstreamPlannerProvider` turns a natural-language goal into workstream drafts; the `ask` callback in its contract is a generic clarification channel (CLI relays questions as terminal prompts; other hosts can use other surfaces).
+- Current providers:
+  - `workstream.filesystem` — backlog state in `.forge/workstream.json`; re-import merges by id and preserves queued state
+  - `workstream-planner.pi` — asks pi for clarifying questions, then for a JSON plan; lenient JSON extraction from chatty output
+- Commands:
+  - `forge workstream plan <prompt...> [--no-questions]`
+  - `forge workstream import <file.json>`
+  - `forge workstream list`
+  - `forge workstream enqueue [ids...]`
+- Enqueue is a safe repeated sweep: it only queues planned items whose dependencies' tasks are `done`, marks items queued with their task id (no duplicates), and explicit ids force past gating. Tasks flow through the normal createTask path, so discovery scopes and spec gates apply.
+- Future implementations behind the same contracts: Linear, GitHub Issues, Jira backlogs; other planner agents.
+
 ### Sync
 
 - `SyncProvider` reconciles local state.
@@ -147,6 +162,8 @@ forge runs review <fragment>
 forge runs validate <fragment>
 forge runs accept <fragment> --dry-run
 forge lease status
+forge workstream plan <prompt...> --no-questions
+forge workstream enqueue
 forge sync -m "message"
 ```
 

@@ -73,6 +73,28 @@ Lists active provider-neutral resource leases after asking the configured lease 
 
 Removes stale leases through the configured lease provider and prints the number removed. For `lease.filesystem`, stale age defaults to one hour and can be changed with `FORGE_LEASE_STALE_AFTER_MS`.
 
+## `forge workstream plan <prompt...>`
+
+Defines a workstream interactively with the configured `WorkstreamPlannerProvider`. The provider may ask clarifying questions (scope edges, sequencing, constraints) through a generic channel; the CLI relays them as terminal prompts. Pass `--no-questions` to plan without an interview. The resulting items are merged into the existing backlog — queued items are untouched, and new item ids that collide with backlog ids are suffixed (with intra-plan dependency references remapped to match).
+
+The built-in planner is `workstream-planner.pi` (`[providers] workstreamPlanner = "pi"`), which asks pi for clarifying questions, then for a JSON plan of dependency-ordered items sized with honest complexity so the spec gate still applies to risky work.
+
+After planning: `forge workstream enqueue` to queue unblocked items, then `forge task run-ready --parallel <n>`.
+
+## `forge workstream import [path]`
+
+Imports provider-neutral roadmap/workstream backlog items from JSON into the configured `WorkstreamProvider`. The built-in filesystem provider stores normalized items in `.forge/workstream.json`. Input may be an array or an object with an `items` array. Each item supports `id`, `title`, `description`, `dependencies`, and `complexity` (`trivial|small|medium|large`). Re-importing an edited roadmap merges by item `id` and preserves the queued status and task linkage of items that were already enqueued.
+
+## `forge workstream list`
+
+Lists workstream backlog items with ID, status (`planned` or `queued`), complexity, dependencies, title, and the linked Forge task ID once queued.
+
+## `forge workstream enqueue [ids...]`
+
+Creates Forge tasks from planned workstream items through the normal `createTask` flow, preserving complexity gates: trivial/small items become `ready`, while medium/large items become `needs-spec`. Each enqueued item is marked `queued` and linked to its task, so running enqueue repeatedly never duplicates tasks.
+
+Without arguments, enqueue only takes planned items whose dependencies are all done: every dependency must already be queued and its linked task must have status `done` (dependencies that don't name a workstream item are ignored). This makes `forge workstream enqueue` safe to run repeatedly as a sweep — each pass releases the next wave of unblocked items. Passing explicit ids force-enqueues those items past dependency gating (but never re-queues an already-queued item).
+
 ## `forge build <request...>`
 
 Alias: `forge b`.

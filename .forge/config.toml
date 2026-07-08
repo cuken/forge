@@ -2,6 +2,8 @@
 isolation = "podman"
 validation = "shell"
 lease = "filesystem"
+workstream = "filesystem"
+workstreamPlanner = "pi"
 
 [validation]
 commands = ["npm ci", "npm test", "npm run build"]
