@@ -7,7 +7,7 @@ import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
 import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
 import { extractJsonBlock } from '../src/providers/planner-pi/index.js';
-import type { WorkstreamPlannerProvider, WorkstreamPlanRequest } from '../src/core/workstream.js';
+import type { WorkstreamItem, WorkstreamPlannerProvider, WorkstreamPlanRequest, WorkstreamProvider } from '../src/core/workstream.js';
 import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { SpecProvider } from '../src/core/spec.js';
 import type { AgentProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
@@ -17,6 +17,7 @@ class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; async run(){ return { exitCode: 0, output: 'ok' }; } }
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
 class MemorySpec implements SpecProvider { id='spec.memory'; kind='spec' as const; async generateSpec(input:{task:Task}){ return { providerId: this.id, body: `# Generated spec\n\n${input.task.title}` }; } }
+class BrokenWorkstream implements WorkstreamProvider { id='workstream.broken'; kind='workstream' as const; async import(){ return []; } async list(): Promise<WorkstreamItem[]> { throw new Error('tracker unavailable'); } async update(){ throw new Error('tracker unavailable'); } }
 
 class MemoryPlanner implements WorkstreamPlannerProvider {
   id = 'workstream-planner.memory';
@@ -177,6 +178,19 @@ describe('workstream backlog', () => {
       ['Medium yolo item', 'done'],
     ]));
     expect(result.status).toEqual([]);
+  });
+
+  it('continues running local ready tasks when the workstream provider is unavailable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-workstream-test-'));
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), workstream: new BrokenWorkstream() });
+    const task = await rt.createTask('local ready task');
+
+    const result = await rt.sweepWorkstream(undefined, { concurrency: 1 });
+
+    expect(result.errors).toEqual([expect.stringContaining('workstream enqueue failed: tracker unavailable')]);
+    expect(result.runResults).toHaveLength(1);
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'reviewing' });
+    expect(result.status).toEqual(expect.arrayContaining([expect.stringContaining('workstream unavailable: tracker unavailable')]));
   });
 
   it('extracts balanced JSON blocks from chatty planner output', () => {

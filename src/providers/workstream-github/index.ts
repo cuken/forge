@@ -29,8 +29,14 @@ export class FetchGitHubRestTransport implements GitHubRestTransport {
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     this.token ??= await resolveGitHubToken();
     if (!this.token) throw new Error('No GitHub token: set GITHUB_TOKEN/GH_TOKEN or run gh auth login');
-    const response = await fetch(`https://api.github.com${path}`, { method, headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${this.token}`, 'content-type': 'application/json', 'x-github-api-version': '2022-11-28' }, body: body === undefined ? undefined : JSON.stringify(body) });
-    if (!response.ok) throw new Error(`GitHub REST request failed: ${response.status} ${response.statusText}: ${await response.text()}`);
+    let response: Response;
+    try {
+      response = await fetch(`https://api.github.com${path}`, { method, headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${this.token}`, 'content-type': 'application/json', 'x-github-api-version': '2022-11-28' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    } catch (error) {
+      const cause = error instanceof Error && 'cause' in error && error.cause instanceof Error ? `: ${error.cause.message}` : error instanceof Error ? `: ${error.message}` : '';
+      throw new Error(`GitHub REST request failed before response for ${method} ${path}${cause}. Check host network/DNS connectivity to api.github.com; this request runs in the Forge CLI process, not inside the task Podman container.`);
+    }
+    if (!response.ok) throw new Error(`GitHub REST request failed for ${method} ${path}: ${response.status} ${response.statusText}: ${await response.text()}`);
     if (response.status === 204) return undefined as T;
     return await response.json() as T;
   }

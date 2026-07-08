@@ -192,16 +192,20 @@ export class ForgeRuntime {
 
     const workstream = this.providers().find(provider => hasWorkstream(provider));
     if (workstream && hasWorkstream(workstream)) {
-      const items = await workstream.list();
-      const byId = new Map(items.map(item => [item.id, item]));
-      for (const item of items.filter(item => item.status === 'planned' && item.dependencies.length)) {
-        const blockedBy = item.dependencies.filter(depId => {
-          const dep = byId.get(depId);
-          if (!dep) return false;
-          if (dep.status !== 'queued' || !dep.taskId) return true;
-          return taskById.get(dep.taskId)?.status !== 'done';
-        });
-        if (blockedBy.length) lines.push(`blocked workstream: ${item.title} (waiting on ${blockedBy.join(', ')}) -> forge workstream enqueue ${item.id}`);
+      try {
+        const items = await workstream.list();
+        const byId = new Map(items.map(item => [item.id, item]));
+        for (const item of items.filter(item => item.status === 'planned' && item.dependencies.length)) {
+          const blockedBy = item.dependencies.filter(depId => {
+            const dep = byId.get(depId);
+            if (!dep) return false;
+            if (dep.status !== 'queued' || !dep.taskId) return true;
+            return taskById.get(dep.taskId)?.status !== 'done';
+          });
+          if (blockedBy.length) lines.push(`blocked workstream: ${item.title} (waiting on ${blockedBy.join(', ')}) -> forge workstream enqueue ${item.id}`);
+        }
+      } catch (error) {
+        lines.push(`workstream unavailable: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -209,12 +213,20 @@ export class ForgeRuntime {
   }
 
   async sweepWorkstream(observer?: (event: string) => void, options: { concurrency?: number; yolo?: boolean } = {}) {
-    const enqueued = await this.enqueueWorkstream();
+    const sweepErrors: string[] = [];
+    let enqueued: Task[] = [];
+    try {
+      enqueued = await this.enqueueWorkstream();
+    } catch (error) {
+      const message = `workstream enqueue failed: ${error instanceof Error ? error.message : String(error)}`;
+      sweepErrors.push(message);
+      observer?.(`${message}\n`);
+    }
     const beforeRun = options.yolo ? await this.bypassHumanGates(observer) : { specced: [], approved: [], accepted: [], errors: [] };
     const runResults = await this.runReady(undefined, observer, { concurrency: options.concurrency });
     const afterRun = options.yolo ? await this.bypassHumanGates(observer) : { specced: [], approved: [], accepted: [], errors: [] };
     const status = await this.status();
-    return { enqueued, runResults, status, yolo: { specced: [...beforeRun.specced, ...afterRun.specced], approved: [...beforeRun.approved, ...afterRun.approved], accepted: [...beforeRun.accepted, ...afterRun.accepted], errors: [...beforeRun.errors, ...afterRun.errors] } };
+    return { enqueued, runResults, status, errors: sweepErrors, yolo: { specced: [...beforeRun.specced, ...afterRun.specced], approved: [...beforeRun.approved, ...afterRun.approved], accepted: [...beforeRun.accepted, ...afterRun.accepted], errors: [...beforeRun.errors, ...afterRun.errors] } };
   }
 
   async bypassHumanGates(observer?: (event: string) => void) {

@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GitHubIssuesWorkstreamProvider, type GitHubRestTransport } from '../src/providers/workstream-github/index.js';
+import { FetchGitHubRestTransport, GitHubIssuesWorkstreamProvider, type GitHubRestTransport } from '../src/providers/workstream-github/index.js';
 
 class MockGitHub implements GitHubRestTransport {
   requests: { method: string; path: string; body?: unknown }[] = [];
@@ -23,6 +23,16 @@ class MockGitHub implements GitHubRestTransport {
 }
 
 describe('GitHubIssuesWorkstreamProvider', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reports host-side GitHub network failures with actionable context', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw Object.assign(new Error('fetch failed'), { cause: new Error('getaddrinfo ENOTFOUND api.github.com') }); }));
+    const transport = new FetchGitHubRestTransport('token');
+
+    await expect(transport.request('GET', '/repos/acme/repo/issues')).rejects.toThrow(/host network\/DNS connectivity to api\.github\.com/);
+    await expect(transport.request('GET', '/repos/acme/repo/issues')).rejects.toThrow(/not inside the task Podman container/);
+  });
+
   afterEach(() => vi.unstubAllEnvs());
 
   it('maps GitHub issues to provider-neutral workstream items', async () => {

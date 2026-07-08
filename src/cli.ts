@@ -186,7 +186,8 @@ program.command('process').description('Continuously sweep the workstream: enque
     do {
       logProcess('sweep', `starting sweep (parallel=${opts.parallel}${opts.yolo ? ', yolo=on' : ''})`, '🔄');
       const result = await rt.sweepWorkstream(processObserver(), { concurrency: opts.parallel, yolo: opts.yolo });
-      logProcess('sweep', `enqueued ${result.enqueued.length}, ran ${result.runResults.length}`, '✅');
+      logProcess('sweep', `enqueued ${result.enqueued.length}, ran ${result.runResults.length}`, result.errors.length ? '⚠️' : '✅');
+      for (const error of result.errors) logProcess('sweep-error', error, '❌');
       if (opts.yolo) logProcess('wdo', `specced ${result.yolo.specced.length}, approved ${result.yolo.approved.length}, accepted ${result.yolo.accepted.length}, errors ${result.yolo.errors.length}`, result.yolo.errors.length ? '⚠️' : '⚡');
       for (const error of result.yolo.errors) logProcess('wdo-error', error, '❌');
       if (!result.status.length) logProcess('status', 'no pending human actions', '✨');
