@@ -51,6 +51,19 @@ Lifecycle hook payloads are defined in `src/core/lifecycle.ts` and intentionally
 
 Lifecycle hooks and workstream completion are intentionally separate contracts. Use `LifecycleHookProvider` for audit, notifications, metrics, cache refresh, or other reactions that should not block the state transition. Use `WorkstreamCompletionProvider` when an accepted Forge run must update the authoritative tracker/workstream item; failures from that provider are surfaced to the caller of `forge runs accept` so operators know the external completion update did not happen.
 
+## Provider registry
+
+CLI provider selection goes through `ProviderRegistry` (`src/core/provider-registry.ts`). The registry maps a provider `kind` plus a canonical provider id or legacy short alias to a factory. In-repo providers are registered by `defaultProviderRegistry()` in `src/cli.ts`, so existing config values such as `host`, `podman`, `github`, `pi`, and `filesystem` continue to resolve to canonical ids such as `isolation.host`, `isolation.podman`, `workstream.github`, `agent.pi`, and `store.filesystem`.
+
+Registry entries must declare:
+
+- `kind` — the provider interface family, e.g. `isolation`, `workstream`, or `spec`.
+- `id` — the stable namespaced provider id returned by the provider instance.
+- `aliases` — optional compatibility names accepted in config/CLI environment selection.
+- `create` — a factory that constructs the provider with current Forge config and environment.
+
+Unknown provider names fail before runtime construction with a clear `Unknown <kind> provider '<name>'. Expected ...` error listing registered ids and aliases for that kind. Future package/plugin loading should extend the same registry rather than adding provider-specific conditionals to `ForgeRuntime` or command orchestration.
+
 ## Provider rules
 
 1. Provider IDs should be stable and namespaced, e.g. `vcs.git`, `agent.pi`, `scm.github`.

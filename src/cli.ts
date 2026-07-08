@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { basename } from 'node:path';
 import { ForgeRuntime } from './core/forge.js';
+import { ProviderRegistry } from './core/provider-registry.js';
 import { FileTaskStore } from './providers/store-filesystem/index.js';
 import { FileRunStore } from './providers/store-filesystem/runs.js';
 import { FileReleaseStore } from './providers/store-filesystem/releases.js';
@@ -80,18 +81,48 @@ function processObserver() {
   };
 }
 
+export function defaultProviderRegistry(config = readForgeConfigSync()) {
+  const registry = new ProviderRegistry();
+  const piCommand = config?.pi?.command ?? 'pi';
+  const piArgs = config?.pi?.args ?? ['-p'];
+  const staleAfterMs = process.env.FORGE_LEASE_STALE_AFTER_MS ? Number(process.env.FORGE_LEASE_STALE_AFTER_MS) : undefined;
+  registry
+    .register({ kind: 'task-store', id: 'store.filesystem', aliases: ['filesystem'], create: () => new FileTaskStore() })
+    .register({ kind: 'run-store', id: 'store.filesystem.runs', aliases: ['filesystem'], create: () => new FileRunStore() })
+    .register({ kind: 'release-store', id: 'store.filesystem.releases', aliases: ['filesystem'], create: () => new FileReleaseStore() })
+    .register({ kind: 'vcs', id: 'vcs.git', aliases: ['git'], create: () => new GitVcsProvider() })
+    .register({ kind: 'workspace', id: 'workspace.git-worktree', aliases: ['git-worktree'], create: () => new GitWorktreeProvider() })
+    .register({ kind: 'change-set', id: 'change-set.git-worktree', aliases: ['git-worktree'], create: () => new GitWorktreeChangeSetProvider() })
+    .register({ kind: 'agent', id: 'agent.pi', aliases: ['pi'], create: () => new PiAgentProvider('pi', ['-p']) })
+    .register({ kind: 'scm', id: 'scm.github', aliases: ['github'], create: () => new GitHubScmProvider(config?.github) })
+    .register({ kind: 'build-planner', id: 'build-planner.heuristic', aliases: ['heuristic'], create: () => new HeuristicBuildPlannerProvider() })
+    .register({ kind: 'isolation', id: 'isolation.host', aliases: ['host'], create: () => new HostIsolationProvider() })
+    .register({ kind: 'isolation', id: 'isolation.docker', aliases: ['docker'], create: () => new DockerIsolationProvider() })
+    .register({ kind: 'isolation', id: 'isolation.podman', aliases: ['podman'], create: () => new PodmanIsolationProvider({ image: process.env.FORGE_PODMAN_IMAGE, readyCommand: process.env.FORGE_PODMAN_READY ? ['sh', '-lc', process.env.FORGE_PODMAN_READY] : undefined, readyAttempts: process.env.FORGE_PODMAN_READY_ATTEMPTS ? Number(process.env.FORGE_PODMAN_READY_ATTEMPTS) : undefined, mountPiConfig: process.env.FORGE_PODMAN_MOUNT_PI_CONFIG !== '0', piConfigPath: process.env.FORGE_PODMAN_PI_CONFIG }) })
+    .register({ kind: 'notification', id: 'notification.console', aliases: ['console'], create: () => new ConsoleNotificationProvider((config?.notifications?.channel ?? 'stderr') as ConsoleNotificationChannel) })
+    .register({ kind: 'notification', id: 'notification.filesystem', aliases: ['filesystem'], create: () => new FilesystemNotificationProvider(process.cwd(), (config?.notifications?.channel ?? 'audit') as FilesystemNotificationChannel) })
+    .register({ kind: 'validation', id: 'validation.shell', aliases: ['shell'], create: () => new ShellValidationProvider(config?.validation?.commands ?? []) })
+    .register({ kind: 'task-discovery', id: 'task-discovery.heuristic', aliases: ['heuristic'], create: () => new HeuristicTaskDiscoveryProvider() })
+    .register({ kind: 'lease', id: 'lease.memory', aliases: ['memory'], create: () => new MemoryLeaseProvider() })
+    .register({ kind: 'lease', id: 'lease.filesystem', aliases: ['filesystem'], create: () => new FileLeaseProvider(process.cwd(), staleAfterMs) })
+    .register({ kind: 'workstream', id: 'workstream.filesystem', aliases: ['filesystem'], create: () => new FileWorkstreamProvider() })
+    .register({ kind: 'workstream', id: 'workstream.linear', aliases: ['linear'], create: () => new LinearWorkstreamProvider(config?.linear ?? {}) })
+    .register({ kind: 'workstream', id: 'workstream.github', aliases: ['github'], create: () => new GitHubIssuesWorkstreamProvider(config?.github ?? {}) })
+    .register({ kind: 'gate', id: 'gate.github-issues', aliases: ['github'], create: () => new GitHubIssuesGateProvider(config?.github ?? {}) })
+    .register({ kind: 'workstream-planner', id: 'workstream-planner.pi', aliases: ['pi'], create: () => new PiWorkstreamPlannerProvider(piCommand, piArgs) })
+    .register({ kind: 'spec', id: 'spec.pi', aliases: ['pi'], create: () => new PiSpecProvider(piCommand, piArgs) });
+  return registry;
+}
+
 export function isolationProvider() {
-  const configured = readForgeConfigSync()?.providers?.isolation;
-  const requested = process.env.FORGE_ISOLATION ?? configured ?? 'host';
-  if (requested === 'docker' || requested === 'isolation.docker') return new DockerIsolationProvider();
-  if (requested === 'podman' || requested === 'isolation.podman') return new PodmanIsolationProvider({ image: process.env.FORGE_PODMAN_IMAGE, readyCommand: process.env.FORGE_PODMAN_READY ? ['sh', '-lc', process.env.FORGE_PODMAN_READY] : undefined, readyAttempts: process.env.FORGE_PODMAN_READY_ATTEMPTS ? Number(process.env.FORGE_PODMAN_READY_ATTEMPTS) : undefined, mountPiConfig: process.env.FORGE_PODMAN_MOUNT_PI_CONFIG !== '0', piConfigPath: process.env.FORGE_PODMAN_PI_CONFIG });
-  if (requested === 'host' || requested === 'isolation.host') return new HostIsolationProvider();
-  throw new Error(`Unknown isolation provider '${requested}'. Expected host, docker, podman, isolation.host, isolation.docker, or isolation.podman.`);
+  const config = readForgeConfigSync();
+  const requested = process.env.FORGE_ISOLATION || config?.providers?.isolation || 'host';
+  return defaultProviderRegistry(config).create('isolation', requested);
 }
 
 export function notificationProvider() {
   const config = readForgeConfigSync();
-  const requested = config?.providers?.notification ?? (config ? undefined : 'console');
+  const requested = config?.providers?.notification || (config ? undefined : 'console');
   if (!requested) return undefined;
   const channel = config?.notifications?.channel ?? (requested === 'filesystem' || requested === 'notification.filesystem' ? 'audit' : 'stderr');
   if (requested === 'console' || requested === 'notification.console') {
@@ -102,36 +133,35 @@ export function notificationProvider() {
     if (channel !== 'audit') throw new Error(`Unknown notification channel '${channel}'. Expected audit for filesystem notifications.`);
     return new FilesystemNotificationProvider(process.cwd(), channel as FilesystemNotificationChannel);
   }
-  throw new Error(`Unknown notification provider '${requested}'. Expected console, filesystem, notification.console, or notification.filesystem.`);
+  return defaultProviderRegistry(config).create('notification', requested) as ConsoleNotificationProvider | FilesystemNotificationProvider;
 }
 
 function runtime() {
   const config = readForgeConfigSync();
+  const registry = defaultProviderRegistry(config);
   const validationCommands = config?.validation?.commands ?? [];
   const requestedValidation = config?.providers?.validation;
-  if (requestedValidation && requestedValidation !== 'shell' && requestedValidation !== 'validation.shell') throw new Error(`Unknown validation provider '${requestedValidation}'. Expected shell or validation.shell.`);
-  const validation = validationCommands.length ? new ShellValidationProvider(validationCommands) : undefined;
-  const requestedDiscovery = config?.providers?.taskDiscovery;
-  if (requestedDiscovery && requestedDiscovery !== 'heuristic' && requestedDiscovery !== 'task-discovery.heuristic') throw new Error(`Unknown task discovery provider '${requestedDiscovery}'. Expected heuristic or task-discovery.heuristic.`);
-  const requestedLease = config?.providers?.lease;
-  if (requestedLease && !['memory', 'lease.memory', 'filesystem', 'lease.filesystem'].includes(requestedLease)) throw new Error(`Unknown lease provider '${requestedLease}'. Expected memory, filesystem, lease.memory, or lease.filesystem.`);
-  const requestedWorkstream = config?.providers?.workstream;
-  if (requestedWorkstream && !['filesystem', 'workstream.filesystem', 'linear', 'workstream.linear', 'github', 'workstream.github'].includes(requestedWorkstream)) throw new Error(`Unknown workstream provider '${requestedWorkstream}'. Expected filesystem, linear, github, workstream.filesystem, workstream.linear, or workstream.github.`);
-  const requestedPlanner = config?.providers?.workstreamPlanner;
-  if (requestedPlanner && requestedPlanner !== 'pi' && requestedPlanner !== 'workstream-planner.pi') throw new Error(`Unknown workstream planner provider '${requestedPlanner}'. Expected pi or workstream-planner.pi.`);
   const requestedSpec = config?.providers?.spec ?? 'pi';
-  if (requestedSpec && requestedSpec !== 'pi' && requestedSpec !== 'spec.pi') throw new Error(`Unknown spec provider '${requestedSpec}'. Expected pi or spec.pi.`);
-  const requestedGate = config?.providers?.gate;
-  if (requestedGate && requestedGate !== 'github' && requestedGate !== 'gate.github-issues') throw new Error(`Unknown gate provider '${requestedGate}'. Expected github or gate.github-issues.`);
-  const staleAfterMs = process.env.FORGE_LEASE_STALE_AFTER_MS ? Number(process.env.FORGE_LEASE_STALE_AFTER_MS) : undefined;
-  const lease = requestedLease === 'filesystem' || requestedLease === 'lease.filesystem' ? new FileLeaseProvider(process.cwd(), staleAfterMs) : new MemoryLeaseProvider();
-  const workstream = requestedWorkstream === 'linear' || requestedWorkstream === 'workstream.linear'
-    ? new LinearWorkstreamProvider(config?.linear ?? {})
-    : requestedWorkstream === 'github' || requestedWorkstream === 'workstream.github'
-      ? new GitHubIssuesWorkstreamProvider(config?.github ?? {})
-      : new FileWorkstreamProvider();
-  const gate = requestedGate ? new GitHubIssuesGateProvider(config?.github ?? {}) : undefined;
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), releaseStore: new FileReleaseStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(config?.github), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), spec: requestedSpec ? new PiSpecProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) : undefined, notification: notificationProvider(), gate });
+  return new ForgeRuntime({
+    store: registry.create('task-store', config?.providers?.store || 'filesystem') as any,
+    runStore: registry.create('run-store', 'filesystem') as any,
+    releaseStore: registry.create('release-store', config?.providers?.releaseStore || 'filesystem') as any,
+    vcs: registry.create('vcs', config?.providers?.vcs || 'git') as any,
+    workspace: registry.create('workspace', config?.providers?.workspace || 'git-worktree') as any,
+    isolation: registry.create('isolation', process.env.FORGE_ISOLATION || config?.providers?.isolation || 'host') as any,
+    agent: registry.create('agent', config?.providers?.agent || 'pi') as any,
+    scm: registry.optional('scm', config?.providers?.scm || 'github') as any,
+    buildPlanner: registry.create('build-planner', config?.providers?.buildPlanner || 'heuristic') as any,
+    changeSet: registry.create('change-set', config?.providers?.changeSet || 'git-worktree') as any,
+    validation: requestedValidation || validationCommands.length ? registry.create('validation', requestedValidation || 'shell') as any : undefined,
+    taskDiscovery: registry.create('task-discovery', config?.providers?.taskDiscovery || 'heuristic') as any,
+    lease: registry.create('lease', config?.providers?.lease || 'memory') as any,
+    workstream: registry.create('workstream', config?.providers?.workstream || 'filesystem') as any,
+    workstreamPlanner: registry.create('workstream-planner', config?.providers?.workstreamPlanner || 'pi') as any,
+    spec: requestedSpec ? registry.create('spec', requestedSpec) as any : undefined,
+    notification: notificationProvider(),
+    gate: registry.optional('gate', config?.providers?.gate) as any
+  });
 }
 
 export const program = new Command();
