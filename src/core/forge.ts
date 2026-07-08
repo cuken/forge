@@ -7,7 +7,7 @@ import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
 import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } from './lease.js';
 import { hasNotification, type NotificationProvider, type RunNotificationEvent } from './notification.js';
-import { hasReleaseVcs, type PrepareReleaseResult, type ReleaseVcsProvider } from './release-vcs.js';
+import { hasReleaseVcs, type PrepareReleaseResult, type ReleaseVcsProvider, type ReleaseVcsRef } from './release-vcs.js';
 import { resolveTask } from './resolve.js';
 import { hasSpec, type SpecProvider } from './spec.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
@@ -68,6 +68,15 @@ export class ForgeRuntime {
     const provider = this.providers().find(provider => hasReleaseVcs(provider));
     if (!provider || !hasReleaseVcs(provider)) throw new Error('No release VCS provider configured');
     return provider;
+  }
+
+  private async resolveTaskReleaseRef(task: Task): Promise<ReleaseVcsRef | undefined> {
+    if (!task.targetRelease) return undefined;
+    const release = await this.releaseStore().get(task.targetRelease.id);
+    if (!release) throw new Error(`Release not found: ${task.targetRelease.id}`);
+    const provider = this.releaseVcsProvider();
+    const target = await provider.ensureReleaseTarget({ release });
+    return provider.resolveReleaseRef({ release, target });
   }
 
   async prepareRelease(id: string): Promise<PrepareReleaseResult> {
@@ -529,11 +538,13 @@ export class ForgeRuntime {
           }
           await emit(`lease ${lease.id} acquired by ${lease.providerId}\n`);
         }
+        const releaseRef = await this.resolveTaskReleaseRef(task);
+        if (releaseRef) await emit(`target release ${task.targetRelease!.id} (${task.targetRelease!.version}) using ref ${releaseRef.ref}\n`);
         await emit('creating workspace...\n');
-        const ws = await this.deps.workspace.create({ task });
+        const ws = await this.deps.workspace.create({ task, baseBranch: releaseRef?.ref });
         const workspaceRun = await this.deps.runStore?.update(run!.id, { workspace: ws });
-        await this.notifyRun('run.workspace-created', { task, run: workspaceRun ?? run, message: `workspace ${ws.path} on ${ws.branch}` });
-        await emit(`workspace ${ws.path} on ${ws.branch}\n`);
+        await this.notifyRun('run.workspace-created', { task, run: workspaceRun ?? run, message: `workspace ${ws.path} on ${ws.branch}${releaseRef ? ` from release ${task.targetRelease!.id} ref ${releaseRef.ref}` : ''}` });
+        await emit(`workspace ${ws.path} on ${ws.branch}${releaseRef ? ` (base ${releaseRef.ref})` : ''}\n`);
         await emit('preparing execution environment...\n');
         const env = this.deps.isolation ? await this.deps.isolation.prepare({ task, workspace: ws }) : { id: 'isolation.none', kind: 'host' as const, workspacePath: ws.path, description: 'No isolation provider configured' };
         const environmentRun = await this.deps.runStore?.update(run!.id, { environment: env });
@@ -542,7 +553,7 @@ export class ForgeRuntime {
         await emit(`running agent ${this.deps.agent.id}...\n`);
         const result = await (async () => {
           try {
-            return await this.deps.agent.run({ task, workspacePath: env.workspacePath, environment: env, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}\nExecution environment: ${env.id} (${env.kind})\n${env.description}`, onOutput: capture });
+            return await this.deps.agent.run({ task, workspacePath: env.workspacePath, environment: env, context: `Workspace: ${ws.path}\nBranch: ${ws.branch}${releaseRef ? `\nTarget release: ${task.targetRelease!.id} (${task.targetRelease!.version})\nRelease ref: ${releaseRef.ref}` : ''}\nExecution environment: ${env.id} (${env.kind})\n${env.description}`, onOutput: capture });
           } finally {
             await this.deps.isolation?.cleanup?.(env);
           }

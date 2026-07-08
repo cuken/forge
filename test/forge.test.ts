@@ -26,8 +26,8 @@ class MemoryReleaseVcs extends MemoryVcs implements ReleaseVcsProvider {
   async resolveReleaseRef(input:{release:{id:string; version:string}; target:ReleaseVcsTarget}){ this.calls.push(`ref:${input.target.targetId}`); return { providerId: this.id, releaseId: input.release.id, ref: `release/${input.release.version}`, baseRef: 'main', headRef: `release/${input.release.version}` }; }
   async prepareReleaseReview(input:{release:{id:string}; target:ReleaseVcsTarget; ref:ReleaseVcsRef}){ this.calls.push(`review:${input.ref.ref}`); return { providerId: this.id, releaseId: input.release.id, status: 'ready' as const, reviewUrl: `${input.target.url}/compare/${input.ref.ref}`, message: `prepared ${input.ref.ref}` }; }
 }
-class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; async create(input:{task:Task}){ return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
-class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; runs: string[]=[]; async run(input:{task:Task; workspacePath:string; context:string; onOutput?: (chunk: string) => void}){ this.runs.push(input.task.id); input.onOutput?.('agent output\n'); return { exitCode: 0, output: 'ok' }; } }
+class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; creates: Array<{ task: Task; baseBranch?: string }> = []; async create(input:{task:Task; baseBranch?: string}){ this.creates.push(input); return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
+class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; runs: string[]=[]; contexts: string[]=[]; async run(input:{task:Task; workspacePath:string; context:string; onOutput?: (chunk: string) => void}){ this.runs.push(input.task.id); this.contexts.push(input.context); input.onOutput?.('agent output\n'); return { exitCode: 0, output: 'ok' }; } }
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; accepted: string[]=[]; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ this.accepted.push(input.run.id); return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
 class MemoryValidation implements ValidationProvider, ForgeProvider { id='validation.memory'; kind='validation'; constructor(private status:'pass'|'fail'){} async validate(){ return [{ id: 'validation.memory:gate', status: this.status, message: this.status === 'pass' ? 'ok' : 'not ok' }]; } }
 class MemoryDiscovery implements TaskDiscoveryProvider, ForgeProvider { id='task-discovery.memory'; kind='task-discovery'; async discoverTask(input:{title:string}){ return { providerId: this.id, discoveredAt: '2026-01-01T00:00:00.000Z', resourceScopes: [{ kind: 'path' as const, value: `src/${input.title}.ts`, confidence: 'high' as const, reason: 'test scope' }] }; } }
@@ -145,6 +145,32 @@ describe('Forge vertical slice', () => {
     await rt.updateRelease(next.id, { status: 'released' });
     await expect(rt.createTask('bad release task', { targetReleaseId: 'missing' })).rejects.toThrow('Release not found');
     await expect(rt.updateTask(created.id, { targetReleaseId: next.id })).rejects.toThrow('not planned');
+  });
+
+  it('starts release-targeted workspaces from the provider-resolved release ref only for targeted tasks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+    const vcs = new MemoryReleaseVcs();
+    const workspace = new MemoryWorkspace();
+    const agent = new MemoryAgent();
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), releaseStore: new FileReleaseStore(root), vcs, workspace, agent });
+    await rt.init('demo');
+    const release = await rt.createRelease({ version: '7.8.9', target: { kind: 'package', id: 'forge' } });
+    const targeted = await rt.createTask('targeted release work', { targetReleaseId: release.id });
+    const untargeted = await rt.createTask('normal work');
+
+    const results = await rt.runReady();
+
+    expect(results.map(result => result.task).sort()).toEqual([targeted.id, untargeted.id].sort());
+    expect(workspace.creates.find(create => create.task.id === targeted.id)?.baseBranch).toBe('release/7.8.9');
+    expect(workspace.creates.find(create => create.task.id === untargeted.id)?.baseBranch).toBeUndefined();
+    expect(vcs.calls).toEqual([`target:${release.id}`, 'ref:forge']);
+    const targetedContext = agent.contexts.find(context => context.includes(targeted.id)) ?? agent.contexts.find(context => context.includes('Target release:'))!;
+    const untargetedContext = agent.contexts.find(context => !context.includes('Target release:'))!;
+    expect(targetedContext).toContain(`Target release: ${release.id} (7.8.9)`);
+    expect(targetedContext).toContain('Release ref: release/7.8.9');
+    expect(untargetedContext).not.toContain('Release ref:');
+    const targetedRun = results.find(result => result.task === targeted.id)!;
+    await expect(rt.deps.runStore!.readLog(targetedRun.run!)).resolves.toContain(`target release ${release.id} (7.8.9) using ref release/7.8.9`);
   });
 
   it('creates small tasks as ready and medium tasks behind spec gate', async () => {

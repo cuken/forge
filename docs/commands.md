@@ -281,14 +281,15 @@ For each ready task:
 
 1. Mark task `running`.
 2. Ask `LeaseProvider` to acquire discovered resource scopes when configured and scopes are present. Built-in providers are `lease.memory` for one process and `lease.filesystem`/`filesystem` for cross-process coordination via `.forge/leases`; select one in `.forge/config.toml` with `[providers] lease = "filesystem"`. When a scope is held elsewhere, the runtime waits with exponential backoff (250ms up to 5s between attempts) and logs progress at most every 10 seconds. If the wait exceeds `--lease-wait`, the task is deferred: it returns to `ready`, its run record is marked `deferred`, and the run-ready result includes `"deferred": true`. Any lease error that is not a scope conflict fails the task immediately instead of retrying.
-3. Ask `WorkspaceProvider` to create a workspace.
-4. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml` `[providers] isolation = "host"|"docker"|"podman"`. The host provider returns the worktree directly; container providers own setup hooks, readiness checks, command delivery, and cleanup details. The Podman provider can run agent commands through `podman exec` once its retrying readiness command passes.
-5. Ask `AgentProvider` to run with task/workspace/environment context.
-6. Ask the isolation provider to clean up a prepared environment after the agent attempt.
-7. Release any acquired resource scope lease.
-8. Append durable run output to `.forge/logs/<run-id>.log` while the agent runs.
-9. Persist a durable run record in `.forge/runs/<run-id>.json` with task, workspace, environment, agent, status, exit code, and log path metadata.
-10. Mark task `reviewing` on success or `failed` on failure.
+3. If the task targets a release, ask the configured `ReleaseVcsProvider` to resolve that release's provider-owned working ref and pass that ref as the workspace base. Untargeted tasks omit a base ref and keep the workspace provider's existing behavior. The runtime logs the release id/version/ref and includes them in agent context; providers own all branch/ref naming.
+4. Ask `WorkspaceProvider` to create a workspace.
+5. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml` `[providers] isolation = "host"|"docker"|"podman"`. The host provider returns the worktree directly; container providers own setup hooks, readiness checks, command delivery, and cleanup details. The Podman provider can run agent commands through `podman exec` once its retrying readiness command passes.
+6. Ask `AgentProvider` to run with task/workspace/environment context.
+7. Ask the isolation provider to clean up a prepared environment after the agent attempt.
+8. Release any acquired resource scope lease.
+9. Append durable run output to `.forge/logs/<run-id>.log` while the agent runs.
+10. Persist a durable run record in `.forge/runs/<run-id>.json` with task, workspace, environment, agent, status, exit code, and log path metadata.
+11. Mark task `reviewing` on success or `failed` on failure.
 
 Results are returned in ready-task order even when tasks finish out of order. A future implementation can replace this ready-task dispatcher with a graph scheduler while preserving the same provider boundaries.
 
