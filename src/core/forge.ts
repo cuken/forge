@@ -12,11 +12,11 @@ import { hasSpec, type SpecProvider } from './spec.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
 import { hasWorkstream, hasWorkstreamPlanner, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
-import type { AgentProvider, ForgeConfig, ForgeProvider, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
+import type { AgentProvider, ForgeConfig, ForgeProvider, ReleaseRecord, ReleaseStatus, ReleaseStore, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; spec?: SpecProvider & ForgeProvider; notification?: NotificationProvider & ForgeProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; releaseStore?: ReleaseStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; spec?: SpecProvider & ForgeProvider; notification?: NotificationProvider & ForgeProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -24,13 +24,44 @@ export class ForgeRuntime {
     await this.deps.vcs.init();
     await this.deps.store.init();
     await this.deps.runStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
+    await this.deps.releaseStore?.init();
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner, this.deps.spec, this.deps.notification].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.releaseStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner, this.deps.spec, this.deps.notification].filter(Boolean); }
+
+  private releaseStore(): ReleaseStore {
+    if (!this.deps.releaseStore) throw new Error('No release store configured');
+    return this.deps.releaseStore;
+  }
+
+  private releaseId(version: string, target: { kind: string; id: string }) {
+    return [version, target.kind, target.id]
+      .join('-')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || `release-${Date.now()}`;
+  }
+
+  async createRelease(input: { version: string; target: ReleaseRecord['target']; status?: ReleaseStatus; id?: string; scheduledAt?: string; notes?: string; metadata?: ReleaseRecord['metadata'] }): Promise<ReleaseRecord> {
+    const id = input.id ?? this.releaseId(input.version, input.target);
+    return this.releaseStore().create({ id, version: input.version, status: input.status ?? 'planned', target: input.target, scheduledAt: input.scheduledAt, notes: input.notes, metadata: input.metadata });
+  }
+
+  async getRelease(id: string): Promise<ReleaseRecord | null> {
+    return this.releaseStore().get(id);
+  }
+
+  async listReleases(input: { status?: ReleaseStatus; targetKind?: string } = {}): Promise<ReleaseRecord[]> {
+    return this.releaseStore().list(input);
+  }
+
+  async updateRelease(id: string, patch: Partial<ReleaseRecord>): Promise<ReleaseRecord> {
+    return this.releaseStore().update(id, patch);
+  }
 
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
