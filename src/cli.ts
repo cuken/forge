@@ -112,7 +112,7 @@ function runtime() {
   return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), releaseStore: new FileReleaseStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), spec: requestedSpec ? new PiSpecProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) : undefined, notification: notificationProvider() });
 }
 
-const program = new Command();
+export const program = new Command();
 program.name('forge').description('Wide agentic software-work orchestration').version('0.0.0');
 
 program.command('init').option('-n, --name <name>').action(async (opts) => {
@@ -239,14 +239,14 @@ program.command('build <request...>').alias('b').description('Plan a natural-lan
 });
 
 const release = program.command('release').description('Manage provider-neutral release records');
-release.command('create <version>').requiredOption('--target-kind <kind>', 'provider-neutral target kind, such as package or environment').requiredOption('--target-id <id>', 'provider-neutral target identifier').option('--target-name <name>', 'human-readable target name').option('--status <status>', 'planned|preparing|ready|released|failed|canceled', 'planned').option('--notes <notes>').action(async (version, opts) => {
+release.command('create <version>').description('Create a provider-neutral release record').requiredOption('--target-kind <kind>', 'provider-neutral target kind, such as package or environment').requiredOption('--target-id <id>', 'provider-neutral target identifier').option('--target-name <name>', 'human-readable target name').option('--status <status>', 'planned|preparing|ready|released|failed|canceled', 'planned').option('--notes <notes>').action(async (version, opts) => {
   const record = await runtime().createRelease({ version, status: opts.status, target: { kind: opts.targetKind, id: opts.targetId, name: opts.targetName }, notes: opts.notes });
   console.log(`${record.id}\t${record.status}\t${record.version}\t${record.target.kind}:${record.target.id}`);
 });
-release.command('list').option('--status <status>', 'filter by release lifecycle status').option('--target-kind <kind>', 'filter by target kind').action(async opts => {
+release.command('list').description('List provider-neutral release records').option('--status <status>', 'filter by release lifecycle status').option('--target-kind <kind>', 'filter by target kind').action(async opts => {
   for (const record of await runtime().listReleases({ status: opts.status, targetKind: opts.targetKind })) console.log(`${record.id}\t${record.status}\t${record.version}\t${record.target.kind}:${record.target.id}\t${record.createdAt}`);
 });
-release.command('show <id>').action(async id => {
+release.command('show <id>').description('Show release record details as JSON').action(async id => {
   const record = await runtime().getRelease(id);
   if (!record) throw new Error(`Release not found: ${id}`);
   console.log(JSON.stringify(record, null, 2));
