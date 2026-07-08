@@ -4,7 +4,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends git openssh-client ca-certificates bash \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent @hypabolic/hypa
 
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

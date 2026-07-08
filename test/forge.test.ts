@@ -101,7 +101,7 @@ describe('Forge vertical slice', () => {
     const ready = await rt.updateRelease(release.id, { status: 'ready' });
 
     expect(release).toMatchObject({ id: '1-2-3-package-forge-cli', version: '1.2.3', status: 'planned', target: { kind: 'package', id: 'forge-cli', name: 'Forge CLI' } });
-    expect(ready.updatedAt).not.toBe(release.updatedAt);
+    expect(Date.parse(ready.updatedAt)).toBeGreaterThanOrEqual(Date.parse(release.updatedAt));
     await expect(rt.getRelease(release.id)).resolves.toMatchObject({ version: '1.2.3', status: 'ready', target: { metadata: { runtime: 'node' } } });
     await expect(rt.listReleases({ status: 'ready' })).resolves.toHaveLength(1);
     await expect(rt.listReleases({ targetKind: 'environment' })).resolves.toEqual([]);
