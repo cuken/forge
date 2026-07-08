@@ -7,6 +7,7 @@ import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
 import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } from './lease.js';
 import { hasNotification, type NotificationProvider, type RunNotificationEvent } from './notification.js';
+import { hasReleaseVcs, type PrepareReleaseResult, type ReleaseVcsProvider } from './release-vcs.js';
 import { resolveTask } from './resolve.js';
 import { hasSpec, type SpecProvider } from './spec.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
@@ -61,6 +62,27 @@ export class ForgeRuntime {
 
   async updateRelease(id: string, patch: Partial<ReleaseRecord>): Promise<ReleaseRecord> {
     return this.releaseStore().update(id, patch);
+  }
+
+  private releaseVcsProvider(): ReleaseVcsProvider & ForgeProvider {
+    const provider = this.providers().find(provider => hasReleaseVcs(provider));
+    if (!provider || !hasReleaseVcs(provider)) throw new Error('No release VCS provider configured');
+    return provider;
+  }
+
+  async prepareRelease(id: string): Promise<PrepareReleaseResult> {
+    const release = await this.releaseStore().get(id);
+    if (!release) throw new Error(`Release not found: ${id}`);
+    if (release.status !== 'planned' && release.status !== 'preparing') throw new Error(`Release ${id} is ${release.status}, not planned or preparing`);
+    const provider = this.releaseVcsProvider();
+    const preparing = release.status === 'preparing' ? release : await this.releaseStore().update(id, { status: 'preparing', startedAt: new Date().toISOString() });
+    const target = await provider.ensureReleaseTarget({ release: preparing });
+    const ref = await provider.resolveReleaseRef({ release: preparing, target });
+    const review = await provider.prepareReleaseReview({ release: preparing, target, ref });
+    const nextStatus: ReleaseStatus = review.status === 'ready' ? 'ready' : 'preparing';
+    const releaseVcsMetadata = JSON.parse(JSON.stringify({ providerId: provider.id, target, ref, review }));
+    const updated = await this.releaseStore().update(id, { status: nextStatus, metadata: { ...(preparing.metadata ?? {}), releaseVcs: releaseVcsMetadata } });
+    return { release: updated, target, ref, review };
   }
 
   async doctor(): Promise<HealthCheckResult[]> {

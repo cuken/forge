@@ -12,6 +12,7 @@ import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
 import type { NotificationProvider, RunNotificationInput } from '../src/core/notification.js';
 import type { SpecProvider } from '../src/core/spec.js';
+import type { ReleaseVcsProvider, ReleaseVcsRef, ReleaseVcsTarget } from '../src/core/release-vcs.js';
 import { LeaseConflictError, type LeaseHandle, type LeaseProvider } from '../src/core/lease.js';
 import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
@@ -19,6 +20,12 @@ import { GitWorktreeChangeSetProvider } from '../src/providers/workspace-git-wor
 import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; repo=false; async isRepo(){return this.repo;} async init(){this.repo=true;} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
+class MemoryReleaseVcs extends MemoryVcs implements ReleaseVcsProvider {
+  calls: string[] = [];
+  async ensureReleaseTarget(input:{release:{id:string; target:{kind:string; id:string}}}){ this.calls.push(`target:${input.release.id}`); return { providerId: this.id, releaseId: input.release.id, targetKind: input.release.target.kind, targetId: input.release.target.id, exists: true, url: `https://example.test/${input.release.target.id}` }; }
+  async resolveReleaseRef(input:{release:{id:string; version:string}; target:ReleaseVcsTarget}){ this.calls.push(`ref:${input.target.targetId}`); return { providerId: this.id, releaseId: input.release.id, ref: `release/${input.release.version}`, baseRef: 'main', headRef: `release/${input.release.version}` }; }
+  async prepareReleaseReview(input:{release:{id:string}; target:ReleaseVcsTarget; ref:ReleaseVcsRef}){ this.calls.push(`review:${input.ref.ref}`); return { providerId: this.id, releaseId: input.release.id, status: 'ready' as const, reviewUrl: `${input.target.url}/compare/${input.ref.ref}`, message: `prepared ${input.ref.ref}` }; }
+}
 class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; async create(input:{task:Task}){ return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; runs: string[]=[]; async run(input:{task:Task; workspacePath:string; context:string; onOutput?: (chunk: string) => void}){ this.runs.push(input.task.id); input.onOutput?.('agent output\n'); return { exitCode: 0, output: 'ok' }; } }
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; accepted: string[]=[]; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ this.accepted.push(input.run.id); return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
@@ -106,6 +113,20 @@ describe('Forge vertical slice', () => {
     await expect(rt.listReleases({ status: 'ready' })).resolves.toHaveLength(1);
     await expect(rt.listReleases({ targetKind: 'environment' })).resolves.toEqual([]);
     await expect(readFile(join(root, '.forge', 'releases', `${release.id}.json`), 'utf8')).resolves.toContain('first-class release state');
+  });
+
+  it('discovers a generic release VCS capability and prepares a release for review', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+    const vcs = new MemoryReleaseVcs();
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), releaseStore: new FileReleaseStore(root), vcs, workspace: new MemoryWorkspace(), agent: new MemoryAgent() });
+    await rt.init('demo');
+    const release = await rt.createRelease({ version: '2.0.0', target: { kind: 'package', id: 'forge' } });
+
+    const result = await rt.prepareRelease(release.id);
+
+    expect(vcs.calls).toEqual([`target:${release.id}`, 'ref:forge', 'review:release/2.0.0']);
+    expect(result).toMatchObject({ release: { status: 'ready' }, ref: { ref: 'release/2.0.0', baseRef: 'main' }, review: { status: 'ready', reviewUrl: 'https://example.test/forge/compare/release/2.0.0' } });
+    await expect(rt.getRelease(release.id)).resolves.toMatchObject({ status: 'ready', metadata: { releaseVcs: { providerId: 'vcs.memory', ref: { ref: 'release/2.0.0' } } } });
   });
 
   it('validates and persists one planned release target on task create and update', async () => {

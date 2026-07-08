@@ -33,6 +33,7 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `WorkstreamProvider` — stores planned work items with dependencies and complexity for later task creation
 - `WorkstreamPlannerProvider` — plans workstream items from a prompt for `forge workstream plan`, relaying clarifying questions through the caller-supplied `ask` channel
 - `NotificationProvider` — receives best-effort run lifecycle events such as started, workspace-created, environment-prepared, deferred, succeeded, and failed
+- `ReleaseVcsProvider` — prepares provider-neutral release records for human merge/release review without hardcoded branch behavior
 
 Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`. Provider-owned doctor checks should cover external/environmental prerequisites that the runtime cannot know about; for example, `change-set.git-worktree` verifies Git worktree metadata and `.git` pointer accessibility so `forge doctor` can flag container mounts that would make review/accept fail.
 
@@ -148,6 +149,8 @@ Built-in implementation: `workstream-planner.pi`, which runs the configured pi c
 `ReleaseStore` persists first-class release domain records independently of task runs, GitHub releases, branch names, or deployment backends. A `ReleaseRecord` has a stable `id`, semantic or project-defined `version`, lifecycle `status` (`planned`, `preparing`, `ready`, `released`, `failed`, `canceled`), a provider-neutral `target` (`kind`, `id`, optional `name` and metadata), timestamps, notes, and arbitrary metadata.
 
 `ForgeRuntime.createRelease()`, `getRelease()`, `listReleases()`, and `updateRelease()` expose the generic store pattern. Providers should keep target identifiers stable and let future delivery/deployment capabilities interpret release records instead of encoding external-system behavior in core.
+
+`ReleaseVcsProvider` is the generic source-control capability for release preparation. `ForgeRuntime.prepareRelease()` discovers it structurally with `hasReleaseVcs()` and calls, in order, `ensureReleaseTarget({ release })`, `resolveReleaseRef({ release, target })`, and `prepareReleaseReview({ release, target, ref })`. Providers own branch/tag/ref naming, remote existence checks, and review artifact creation; core only advances release status to `preparing`/`ready` and persists the structured provider results under release metadata. Expected human-fixable refusal should return review status `blocked`; unexpected backend failures may throw.
 
 The built-in `store.filesystem.releases` provider stores one JSON file per release in `.forge/releases/` and supports listing by status or target kind.
 

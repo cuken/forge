@@ -257,6 +257,12 @@ release.command('status <id> <status>').description('Update a release lifecycle 
   const record = await runtime().updateRelease(id, { status, ...timestamps });
   console.log(`${record.id}\t${record.status}\t${record.updatedAt}`);
 });
+release.command('prepare <id>').description('Ask the configured release VCS provider to prepare a release for human review').action(async id => {
+  const result = await runtime().prepareRelease(id);
+  console.log(`${result.release.id}\t${result.release.status}\tref=${result.ref.ref}`);
+  console.log(result.review.message);
+  if (result.review.reviewUrl) console.log(result.review.reviewUrl);
+});
 
 const task = program.command('task');
 task.command('create <title>').option('-d, --description <text>').option('-c, --complexity <level>', 'trivial|small|medium|large', 'small').option('--issue', 'create GitHub issue').option('--release <id>', 'target one planned release by id').action(async (title, opts) => {
