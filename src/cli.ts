@@ -275,6 +275,14 @@ workstream.command('enqueue [ids...]').description('Create Forge tasks from plan
   if (!tasks.length) console.log('no eligible planned items (already queued, or waiting on dependencies)');
   for (const task of tasks) console.log(`${task.id} ${task.status} ${task.title}`);
 });
+workstream.command('reconcile').description('Backfill tracker-backed workstream items from local done Forge tasks').option('--dry-run', 'show external tracker updates without applying them', true).option('--apply', 'close/update external tracker items').action(async opts => {
+  const result = await runtime().reconcileWorkstream({ dryRun: !opts.apply });
+  if (!result.reconciled.length) console.log('no workstream items to reconcile');
+  for (const item of result.reconciled) console.log(`${result.dryRun ? 'would complete' : 'completed'}\t${item.itemId}\ttask=${item.taskId}\tproviders=${item.providerIds.join(',')}`);
+  for (const item of result.skipped) console.log(`skipped\t${item.itemId}\t${item.reason}`);
+  for (const item of result.failed) console.log(`failed\t${item.itemId}\t${item.error}`);
+  if (result.failed.length) process.exitCode = 1;
+});
 
 program.command('build <request...>').alias('b').description('Plan a natural-language build task and run the Forge flow').option('--name <name>', 'hard-define task title').option('--pattern <pattern>', 'provider-specific task matching pattern').option('--auto-approve', 'approve generated specs without stopping').option('--no-run', 'create/plan task without running implementation').action(async (request: string[], opts) => {
   const result = await runtime().build({ prompt: request.join(' '), taskName: opts.name, taskPattern: opts.pattern, autoApprove: opts.autoApprove, run: opts.run }, chunk => process.stdout.write(chunk));

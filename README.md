@@ -94,6 +94,7 @@ forge workstream plan build a plugin system with docs and a sample plugin
 forge workstream import roadmap.json
 forge workstream list
 forge workstream enqueue
+forge workstream reconcile --apply
 forge build update forge so that it honors toml files in the config instead of json config files
 forge task create "Add feature" --complexity small
 forge task create "Fix for next release" --release 1-2-3-package-forge-cli

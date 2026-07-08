@@ -117,6 +117,25 @@ describe('GitHubIssuesWorkstreamProvider', () => {
     expect((comment?.body as { body?: string }).body).toContain('pushed');
   });
 
+  it('reconciles tracker-backed GitHub issues whose linked Forge tasks are already done', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-github-workstream-reconcile-'));
+    const transport = new MockGitHub();
+    const provider = new GitHubIssuesWorkstreamProvider({ owner: 'acme', repo: 'repo' }, root, transport);
+    const store = new FileTaskStore(root);
+    await store.create({ id: 'task-1', title: 'Build GitHub provider', description: 'Workstream item: github-provider', status: 'done', complexity: 'small', contextRefs: [] });
+    const rt = new ForgeRuntime({ root, store, runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), workstream: provider, workstreamCompletion: provider });
+
+    await expect(rt.reconcileWorkstream({ dryRun: true })).resolves.toMatchObject({ dryRun: true, reconciled: [{ itemId: 'github-provider', taskId: 'task-1', action: 'would complete', providerIds: ['workstream.github'] }], failed: [] });
+    expect(transport.requests.some(request => request.method === 'PATCH' && (request.body as { state?: string })?.state === 'closed')).toBe(false);
+
+    await expect(rt.reconcileWorkstream()).resolves.toMatchObject({ dryRun: false, reconciled: [{ itemId: 'github-provider', taskId: 'task-1', action: 'completed', providerIds: ['workstream.github'] }], failed: [] });
+    const close = transport.requests.find(request => request.method === 'PATCH' && request.path.endsWith('/issues/1') && (request.body as { state?: string }).state === 'closed');
+    expect(close?.body).toMatchObject({ state: 'closed' });
+    expect((close?.body as { labels: string[] }).labels).toContain('forge:done');
+    const comment = transport.requests.find(request => request.method === 'POST' && request.path.endsWith('/issues/1/comments') && (request.body as { body?: string }).body?.includes('Reconciled from local Forge task state'));
+    expect((comment?.body as { body?: string }).body).toContain('task-1');
+  });
+
   it('closes a tracker-backed GitHub issue when its Forge run is accepted and surfaces close failures', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-github-workstream-e2e-'));
     const transport = new MockGitHub();

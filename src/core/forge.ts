@@ -15,7 +15,7 @@ import { resolveTask } from './resolve.js';
 import { hasSpec, type SpecProvider } from './spec.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
-import { hasWorkstream, hasWorkstreamCompletion, hasWorkstreamPlanner, type WorkstreamCompletionProvider, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
+import { hasWorkstream, hasWorkstreamCompletion, hasWorkstreamPlanner, type WorkstreamCompletionProvider, type WorkstreamCompletionUpdate, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
 import type { AgentProvider, ForgeConfig, ForgeProvider, Json, ReleaseRecord, ReleaseStatus, ReleaseStore, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
@@ -270,7 +270,7 @@ export class ForgeRuntime {
     const item = await this.linkedWorkstreamItem(input.task);
     if (!item) return;
     const failures: string[] = [];
-    await Promise.all(this.providers().filter(provider => hasWorkstreamCompletion(provider)).map(async provider => {
+    await Promise.all([...new Set(this.providers().filter(provider => hasWorkstreamCompletion(provider)))].map(async provider => {
       try {
         await provider.completeWorkstreamItem({
           itemId: item.id,
@@ -371,6 +371,48 @@ export class ForgeRuntime {
 
   async listWorkstream(): Promise<WorkstreamItem[]> {
     return this.workstreamProvider().list();
+  }
+
+  async reconcileWorkstream(input: { dryRun?: boolean } = {}) {
+    const provider = this.workstreamProvider();
+    const completionProviders = [...new Set(this.providers().filter(provider => hasWorkstreamCompletion(provider)))];
+    if (!completionProviders.length) throw new Error('No workstream completion provider configured');
+    const [items, tasks, runs] = await Promise.all([provider.list(), this.deps.store.list(), this.deps.runStore ? this.deps.runStore.list() : Promise.resolve([])]);
+    const taskById = new Map(tasks.map(task => [task.id, task]));
+    const runsByTask = new Map<string, RunRecord[]>();
+    for (const run of runs) runsByTask.set(run.taskId, [...(runsByTask.get(run.taskId) ?? []), run]);
+    const reconciled: { itemId: string; taskId: string; taskTitle: string; action: string; providerIds: string[] }[] = [];
+    const skipped: { itemId: string; reason: string }[] = [];
+    const failed: { itemId: string; taskId?: string; error: string }[] = [];
+
+    for (const item of items) {
+      if (!item.taskId) { skipped.push({ itemId: item.id, reason: 'no linked Forge task' }); continue; }
+      const task = taskById.get(item.taskId);
+      if (!task) { skipped.push({ itemId: item.id, reason: `linked task ${item.taskId} not found` }); continue; }
+      if (task.status !== 'done') { skipped.push({ itemId: item.id, reason: `linked task ${task.id} is ${task.status}` }); continue; }
+      const acceptedRun = (runsByTask.get(task.id) ?? []).filter(run => run.acceptance?.status === 'accepted' || run.acceptance?.status === 'empty').sort((a, b) => (b.finishedAt ?? b.updatedAt).localeCompare(a.finishedAt ?? a.updatedAt))[0];
+      const update: WorkstreamCompletionUpdate = {
+        itemId: item.id,
+        status: 'completed',
+        acceptedRunId: acceptedRun?.id,
+        comment: acceptedRun?.acceptance?.message ?? 'Reconciled from local Forge task state',
+        commit: acceptedRun?.acceptance ? { providerId: acceptedRun.acceptance.providerId, status: acceptedRun.acceptance.status, message: acceptedRun.acceptance.message } : undefined,
+        metadata: { taskId: task.id, taskTitle: task.title, reconciled: true },
+      };
+      if (input.dryRun) { reconciled.push({ itemId: item.id, taskId: task.id, taskTitle: task.title, action: 'would complete', providerIds: completionProviders.map(provider => provider.id) }); continue; }
+      const providerIds: string[] = [];
+      for (const completionProvider of completionProviders) {
+        try {
+          await completionProvider.completeWorkstreamItem(update);
+          providerIds.push(completionProvider.id);
+        } catch (error) {
+          failed.push({ itemId: item.id, taskId: task.id, error: `${completionProvider.id}: ${error instanceof Error ? error.message : String(error)}` });
+        }
+      }
+      if (providerIds.length) reconciled.push({ itemId: item.id, taskId: task.id, taskTitle: task.title, action: 'completed', providerIds });
+    }
+
+    return { dryRun: Boolean(input.dryRun), reconciled, skipped, failed };
   }
 
   private shortFragment(value: string, peers: string[]): string {

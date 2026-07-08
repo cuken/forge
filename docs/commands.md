@@ -218,6 +218,12 @@ Creates Forge tasks from planned workstream items through the normal `createTask
 
 Without arguments, enqueue only takes planned items whose dependencies are all done: every dependency must already be queued and its linked task must have status `done` (dependencies that don't name a workstream item are ignored). This makes `forge workstream enqueue` safe to run repeatedly as a sweep — each pass releases the next wave of unblocked items. Passing explicit ids force-enqueues those items past dependency gating (but never re-queues an already-queued item).
 
+## `forge workstream reconcile`
+
+Scans tracker-backed workstream items and local Forge task state, then invokes the generic `WorkstreamCompletionProvider` for queued items whose linked Forge task is already `done`. This backfills external trackers after local state has been completed, for example closing GitHub-backed workstream issues without manually cleaning up old issues.
+
+The command is a dry run by default and prints the item, linked task, and completion providers that would be updated. Pass `--apply` to close/update the external tracker item. Items without a linked task, missing local task, or non-`done` task are reported as skipped; provider failures are reported as failed and produce a non-zero exit.
+
 ## `forge build <request...>`
 
 Alias: `forge b`.
