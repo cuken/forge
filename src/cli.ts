@@ -29,6 +29,7 @@ import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
 import { PiSpecProvider } from './providers/spec-pi/index.js';
 import { ConsoleNotificationProvider, type ConsoleNotificationChannel } from './providers/notification-console/index.js';
 import { createInterface } from 'node:readline/promises';
+import type { AcceptChangeSetResult } from './core/changes.js';
 
 const useColor = process.env.NO_COLOR === undefined && process.stdout.isTTY;
 const color = (code: number, text: string) => useColor ? `\u001b[${code}m${text}\u001b[0m` : text;
@@ -50,6 +51,16 @@ export function processLogLine(label: string, message: string, emoji = '•', no
 
 function logProcess(label: string, message: string, emoji = '•') {
   console.log(processLogLine(label, message, emoji));
+}
+
+export function acceptResultExitCode(result: AcceptChangeSetResult) {
+  return result.status === 'blocked' || result.status === 'merge-conflict' ? 1 : 0;
+}
+
+export function formatAcceptResult(result: AcceptChangeSetResult, options: { dryRun?: boolean } = {}) {
+  const label = result.status === 'merge-conflict' ? 'conflict' : result.status;
+  const prefix = options.dryRun ? 'dry-run ' : '';
+  return `${prefix}${label} ${result.runId}: ${result.message}`;
 }
 
 function processObserver() {
@@ -331,8 +342,8 @@ run.command('validate <id>').description('Run validation gates for a succeeded r
 });
 run.command('accept <id>').description('Accept the change set from a succeeded run and mark its task done').option('-m, --message <message>', 'accept/commit message').option('--dry-run', 'validate and show what would be accepted without changing state').action(async (id, opts) => {
   const result = await runtime().acceptRun(id, opts.message, { dryRun: opts.dryRun });
-  console.log(`${opts.dryRun ? 'dry-run ' : ''}${result.status} ${result.runId}: ${result.message}`);
-  if (result.status === 'blocked' || result.status === 'merge-conflict') process.exitCode = 1;
+  console.log(formatAcceptResult(result, { dryRun: opts.dryRun }));
+  process.exitCode = acceptResultExitCode(result);
 });
 
 program.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
