@@ -61,7 +61,7 @@ await git.push('upstream', 'main');
 - `forge task approve` marks the spec approved.
 - `forge task run-ready` acquires provider-neutral leases for discovered resource scopes (waiting with backoff and deferring the task back to `ready` if a scope stays busy past the lease-wait deadline), creates worktrees, prepares an execution environment, invokes the configured agent, releases leases, and records durable run metadata/logs for history inspection. It can dispatch multiple ready tasks concurrently with `--parallel`, but each task still crosses only the generic lease, workspace, isolation, agent, and store provider contracts. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
 - `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime.
-- `forge release create/list/show/status` manages first-class release records without assuming GitHub releases, branch names, or any specific deployment provider.
+- `forge release create/list/show/status/prepare` manages first-class release records and asks a generic provider to prepare human merge review without assuming GitHub releases, branch names, automatic merges, or any specific deployment provider.
 
 ## Extension direction
 

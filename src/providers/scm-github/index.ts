@@ -51,7 +51,7 @@ export class GitHubScmProvider implements ScmProvider, DoctorProvider, ReleaseVc
 
   async prepareReleaseReview(input: { release: ReleaseRecord; target: ReleaseVcsTarget; ref: ReleaseVcsRef }): Promise<ReleaseReviewPreparation> {
     const repo = await this.repo();
-    return { providerId: this.id, releaseId: input.release.id, status: 'ready', reviewUrl: `https://github.com/${repo.nameWithOwner}/compare/${input.ref.baseRef}...${input.ref.headRef}`, message: `Release branch ${input.ref.headRef} is ready for review` };
+    return { providerId: this.id, releaseId: input.release.id, status: 'ready', reviewUrl: `https://github.com/${repo.nameWithOwner}/compare/${input.ref.baseRef}...${input.ref.headRef}`, message: `Release branch ${input.ref.headRef} is ready for review`, nextSteps: [`Open ${repo.nameWithOwner} compare view`, `Review ${input.ref.baseRef}...${input.ref.headRef}`, 'Merge manually after human approval'] };
   }
 
   private async repo(): Promise<{ nameWithOwner: string; url: string; defaultBranch: string }> {

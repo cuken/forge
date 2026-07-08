@@ -85,6 +85,7 @@ forge task spec <id> "# Spec..."
 forge approve toml
 forge run toml
 forge release create 1.2.3 --target-kind package --target-id forge-cli
+forge release prepare 1-2-3-package-forge-cli
 forge release list
 forge runs list
 forge runs log <run-id>

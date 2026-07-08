@@ -260,8 +260,13 @@ release.command('status <id> <status>').description('Update a release lifecycle 
 release.command('prepare <id>').description('Ask the configured release VCS provider to prepare a release for human review').action(async id => {
   const result = await runtime().prepareRelease(id);
   console.log(`${result.release.id}\t${result.release.status}\tref=${result.ref.ref}`);
+  console.log(`readiness=${result.review.status}`);
   console.log(result.review.message);
-  if (result.review.reviewUrl) console.log(result.review.reviewUrl);
+  if (result.review.detail) console.log(result.review.detail);
+  if (result.review.reviewUrl) console.log(`review=${result.review.reviewUrl}`);
+  const blockingItems = result.review.blockingItems ?? [];
+  console.log(blockingItems.length ? `blocking=${blockingItems.join('; ')}` : 'blocking=none');
+  for (const step of result.review.nextSteps ?? []) console.log(`next=${step}`);
 });
 
 const task = program.command('task');

@@ -24,13 +24,16 @@ class MemoryReleaseVcs extends MemoryVcs implements ReleaseVcsProvider {
   calls: string[] = [];
   async ensureReleaseTarget(input:{release:{id:string; target:{kind:string; id:string}}}){ this.calls.push(`target:${input.release.id}`); return { providerId: this.id, releaseId: input.release.id, targetKind: input.release.target.kind, targetId: input.release.target.id, exists: true, url: `https://example.test/${input.release.target.id}` }; }
   async resolveReleaseRef(input:{release:{id:string; version:string}; target:ReleaseVcsTarget}){ this.calls.push(`ref:${input.target.targetId}`); return { providerId: this.id, releaseId: input.release.id, ref: `release/${input.release.version}`, baseRef: 'main', headRef: `release/${input.release.version}` }; }
-  async prepareReleaseReview(input:{release:{id:string}; target:ReleaseVcsTarget; ref:ReleaseVcsRef}){ this.calls.push(`review:${input.ref.ref}`); return { providerId: this.id, releaseId: input.release.id, status: 'ready' as const, reviewUrl: `${input.target.url}/compare/${input.ref.ref}`, message: `prepared ${input.ref.ref}` }; }
+  async prepareReleaseReview(input:{release:{id:string}; target:ReleaseVcsTarget; ref:ReleaseVcsRef}){ this.calls.push(`review:${input.ref.ref}`); return { providerId: this.id, releaseId: input.release.id, status: 'ready' as const, reviewUrl: `${input.target.url}/compare/${input.ref.ref}`, message: `prepared ${input.ref.ref}`, nextSteps: ['open review URL', 'merge manually after approval'] }; }
 }
 class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; creates: Array<{ task: Task; baseBranch?: string }> = []; async create(input:{task:Task; baseBranch?: string}){ this.creates.push(input); return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; runs: string[]=[]; contexts: string[]=[]; async run(input:{task:Task; workspacePath:string; context:string; onOutput?: (chunk: string) => void}){ this.runs.push(input.task.id); this.contexts.push(input.context); input.onOutput?.('agent output\n'); return { exitCode: 0, output: 'ok' }; } }
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; accepted: string[]=[]; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ this.accepted.push(input.run.id); return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
 class MemoryValidation implements ValidationProvider, ForgeProvider { id='validation.memory'; kind='validation'; constructor(private status:'pass'|'fail'){} async validate(){ return [{ id: 'validation.memory:gate', status: this.status, message: this.status === 'pass' ? 'ok' : 'not ok' }]; } }
 class MemoryDiscovery implements TaskDiscoveryProvider, ForgeProvider { id='task-discovery.memory'; kind='task-discovery'; async discoverTask(input:{title:string}){ return { providerId: this.id, discoveredAt: '2026-01-01T00:00:00.000Z', resourceScopes: [{ kind: 'path' as const, value: `src/${input.title}.ts`, confidence: 'high' as const, reason: 'test scope' }] }; } }
+class BlockedReleaseVcs extends MemoryReleaseVcs {
+  async prepareReleaseReview(input:{release:{id:string}; target:ReleaseVcsTarget; ref:ReleaseVcsRef}){ this.calls.push(`review:${input.ref.ref}`); return { providerId: this.id, releaseId: input.release.id, status: 'blocked' as const, message: 'release has blocking work', blockingItems: ['2 tasks still awaiting acceptance'], nextSteps: ['accept or remove blocking tasks'] }; }
+}
 class MemoryLease implements LeaseProvider { id='lease.memory'; kind='lease' as const; acquired:string[]=[]; released:string[]=[]; async acquire(input:{task:Task}){ this.acquired.push(input.task.id); return { providerId: this.id, id: `lease-${input.task.id}`, taskId: input.task.id, scopes: input.task.discovery?.resourceScopes ?? [], acquiredAt: '2026-01-01T00:00:00.000Z' }; } async release(lease:LeaseHandle){ this.released.push(lease.taskId); } }
 class MemorySpec implements SpecProvider, ForgeProvider { id='spec.memory'; kind='spec' as const; async generateSpec(input:{task:Task}){ return { providerId: this.id, body: `# Generated spec\n\n${input.task.title}` }; } }
 class MemoryNotification implements NotificationProvider, ForgeProvider { id='notification.memory'; kind='notification'; events:RunNotificationInput[]=[]; async notifyRun(input:RunNotificationInput){ this.events.push(input); } }
@@ -125,8 +128,20 @@ describe('Forge vertical slice', () => {
     const result = await rt.prepareRelease(release.id);
 
     expect(vcs.calls).toEqual([`target:${release.id}`, 'ref:forge', 'review:release/2.0.0']);
-    expect(result).toMatchObject({ release: { status: 'ready' }, ref: { ref: 'release/2.0.0', baseRef: 'main' }, review: { status: 'ready', reviewUrl: 'https://example.test/forge/compare/release/2.0.0' } });
-    await expect(rt.getRelease(release.id)).resolves.toMatchObject({ status: 'ready', metadata: { releaseVcs: { providerId: 'vcs.memory', ref: { ref: 'release/2.0.0' } } } });
+    expect(result).toMatchObject({ release: { status: 'ready' }, ref: { ref: 'release/2.0.0', baseRef: 'main' }, review: { status: 'ready', reviewUrl: 'https://example.test/forge/compare/release/2.0.0', nextSteps: ['open review URL', 'merge manually after approval'] } });
+    await expect(rt.getRelease(release.id)).resolves.toMatchObject({ status: 'ready', metadata: { releaseVcs: { providerId: 'vcs.memory', ref: { ref: 'release/2.0.0' }, review: { nextSteps: ['open review URL', 'merge manually after approval'] } } } });
+  });
+
+  it('keeps blocked release preparation in preparing status and reports work items', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+    const vcs = new BlockedReleaseVcs();
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), releaseStore: new FileReleaseStore(root), vcs, workspace: new MemoryWorkspace(), agent: new MemoryAgent() });
+
+    const release = await rt.createRelease({ version: '2.1.0', target: { kind: 'package', id: 'forge' } });
+    const result = await rt.prepareRelease(release.id);
+
+    expect(result).toMatchObject({ release: { status: 'preparing' }, review: { status: 'blocked', blockingItems: ['2 tasks still awaiting acceptance'], nextSteps: ['accept or remove blocking tasks'] } });
+    await expect(rt.getRelease(release.id)).resolves.toMatchObject({ status: 'preparing', metadata: { releaseVcs: { review: { status: 'blocked', blockingItems: ['2 tasks still awaiting acceptance'] } } } });
   });
 
   it('validates and persists one planned release target on task create and update', async () => {

@@ -26,6 +26,8 @@ export interface ReleaseReviewPreparation {
   reviewUrl?: string;
   message: string;
   detail?: string;
+  blockingItems?: string[];
+  nextSteps?: string[];
 }
 
 export interface ReleaseVcsProvider {
