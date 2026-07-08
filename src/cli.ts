@@ -196,6 +196,27 @@ lease.command('cleanup').description('Remove stale resource leases').action(asyn
   console.log(`removed ${removed} stale lease(s)`);
 });
 
+function printCleanup(result: { dryRun: boolean; items: { kind: string; id: string; path?: string; ref?: string; reason: string; removed: boolean }[] }) {
+  if (!result.items.length) console.log('nothing to clean');
+  for (const item of result.items) {
+    const target = item.path ?? item.ref ?? item.id;
+    console.log(`${result.dryRun ? 'would remove' : item.removed ? 'removed' : 'skipped'}\t${item.kind}\t${target}\t${item.reason}`);
+  }
+}
+
+const cleanup = program.command('cleanup').description('Inspect and remove accumulated Forge runtime state');
+cleanup.command('runs').description('Remove completed, failed, and deferred run records and logs').option('--dry-run', 'show what would be removed without deleting anything', true).option('--apply', 'delete the listed run records and logs').action(async opts => {
+  printCleanup(await runtime().cleanupRuns({ dryRun: !opts.apply }));
+});
+cleanup.command('workspaces').description('Remove git worktrees and branches for done tasks').option('--dry-run', 'show what would be removed without deleting anything', true).option('--apply', 'delete the listed worktrees and branches').action(async opts => {
+  printCleanup(await runtime().cleanupWorkspaces({ dryRun: !opts.apply }));
+});
+cleanup.command('all').description('Run run-log cleanup, then done-task workspace cleanup').option('--dry-run', 'show what would be removed without deleting anything', true).option('--apply', 'delete the listed state').action(async opts => {
+  const dryRun = !opts.apply;
+  printCleanup(await runtime().cleanupRuns({ dryRun }));
+  printCleanup(await runtime().cleanupWorkspaces({ dryRun }));
+});
+
 program.command('process').description('Continuously sweep the workstream: enqueue unblocked items, run ready tasks, then print pending human actions').option('--once', 'run a single sweep and exit').option('--interval <seconds>', 'seconds between sweeps', v => Number(v), 60).option('-p, --parallel <count>', 'maximum ready tasks to run concurrently during each sweep', v => Number(v), 2).option('--yolo', 'bypass human spec approval and run acceptance gates').action(async opts => {
   const rt = runtime();
   let stopping = false;

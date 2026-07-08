@@ -1,5 +1,6 @@
-import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { CleanupResult } from '../../core/cleanup.js';
 import type { RunRecord, RunStore, Task } from '../../core/types.js';
 import { readJson, slug, writeJson } from '../../util/fs.js';
 
@@ -26,4 +27,22 @@ export class FileRunStore implements RunStore {
   async get(id: string): Promise<RunRecord | null> { try { return await readJson<RunRecord>(this.recordPath(id)); } catch { return null; } }
   async list(input: { taskId?: string } = {}): Promise<RunRecord[]> { await this.init(); const files = (await readdir(this.dir())).filter(f => f.endsWith('.json')); const runs = await Promise.all(files.map(f => readJson<RunRecord>(join(this.dir(), f)))); return runs.filter(r => !input.taskId || r.taskId === input.taskId).sort((a,b)=>a.startedAt.localeCompare(b.startedAt)); }
   async readLog(id: string): Promise<string> { const run = await this.get(id); if (!run) throw new Error(`Run not found: ${id}`); return readFile(join(this.root, run.logPath), 'utf8'); }
+  async cleanupRuns(input: { statuses?: RunRecord['status'][]; dryRun?: boolean } = {}): Promise<CleanupResult> {
+    const statuses = input.statuses ?? ['succeeded', 'failed', 'deferred'];
+    const runs = (await this.list()).filter(run => statuses.includes(run.status));
+    const items: CleanupResult['items'] = [];
+    for (const run of runs) {
+      const recordPath = this.recordPath(run.id);
+      const logPath = join(this.root, run.logPath);
+      items.push({ id: run.id, kind: 'run-record', path: recordPath, reason: `run status is ${run.status}`, removed: false });
+      items.push({ id: run.id, kind: 'run-log', path: logPath, reason: `log for ${run.status} run`, removed: false });
+      if (!input.dryRun) {
+        await rm(recordPath, { force: true });
+        await rm(logPath, { force: true });
+        items[items.length - 2].removed = true;
+        items[items.length - 1].removed = true;
+      }
+    }
+    return { dryRun: !!input.dryRun, items };
+  }
 }

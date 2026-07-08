@@ -84,6 +84,8 @@ FORGE_ISOLATION=podman FORGE_PODMAN_IMAGE=your-agent-image forge run toml
 forge sync --dry-run
 forge lease status
 forge lease cleanup
+forge cleanup all
+forge cleanup all --apply
 forge workstream plan build a plugin system with docs and a sample plugin
 forge workstream import roadmap.json
 forge workstream list

@@ -135,6 +135,21 @@ Lists active provider-neutral resource leases after asking the configured lease 
 
 Removes stale leases through the configured lease provider and prints the number removed. For `lease.filesystem`, stale age defaults to one hour and can be changed with `FORGE_LEASE_STALE_AFTER_MS`.
 
+## `forge cleanup`
+
+Inspects and removes accumulated Forge runtime state. Cleanup commands are dry-run by default; pass `--apply` to delete the listed state.
+
+- `forge cleanup runs` removes non-active run records (`succeeded`, `failed`, and `deferred`) and their captured logs from `.forge/runs` and `.forge/logs`.
+- `forge cleanup workspaces` removes git worktrees and local branches that belong to tasks whose status is `done`. Running runs and unfinished tasks are skipped.
+- `forge cleanup all` runs both cleanup passes.
+
+Example:
+
+```bash
+forge cleanup all        # show what would be removed
+forge cleanup all --apply
+```
+
 ## `forge process`
 
 Runs a thin CLI loop around `ForgeRuntime.sweepWorkstream()`. Each sweep:
