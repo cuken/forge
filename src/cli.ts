@@ -254,7 +254,7 @@ program.command('build <request...>').alias('b').description('Plan a natural-lan
 });
 
 const release = program.command('release').description('Manage provider-neutral release records');
-release.command('create <version>').description('Create a provider-neutral release record').requiredOption('--target-kind <kind>', 'provider-neutral target kind, such as package or environment').requiredOption('--target-id <id>', 'provider-neutral target identifier').option('--target-name <name>', 'human-readable target name').option('--status <status>', 'planned|preparing|ready|released|failed|canceled', 'planned').option('--notes <notes>').action(async (version, opts) => {
+release.command('create <version>').description('Create a provider-neutral release record').requiredOption('--target-kind <kind>', 'provider-neutral target kind, such as package or environment').requiredOption('--target-id <id>', 'provider-neutral target identifier').option('--target-name <name>', 'human-readable target name').option('--status <status>', 'planned', 'planned').option('--notes <notes>').action(async (version, opts) => {
   const record = await runtime().createRelease({ version, status: opts.status, target: { kind: opts.targetKind, id: opts.targetId, name: opts.targetName }, notes: opts.notes });
   console.log(`${record.id}\t${record.status}\t${record.version}\t${record.target.kind}:${record.target.id}`);
 });
@@ -266,10 +266,14 @@ release.command('show <id>').description('Show release record details as JSON').
   if (!record) throw new Error(`Release not found: ${id}`);
   console.log(JSON.stringify(record, null, 2));
 });
-release.command('status <id> <status>').description('Update a release lifecycle status').action(async (id, status) => {
+release.command('status <id> <status>').description('Advance a release lifecycle status (planned -> active -> ready -> completed)').action(async (id, status) => {
   const now = new Date().toISOString();
-  const timestamps: Record<string, string> = status === 'preparing' ? { startedAt: now } : status === 'released' ? { releasedAt: now } : status === 'failed' ? { failedAt: now } : status === 'canceled' ? { canceledAt: now } : {};
+  const timestamps: Record<string, string> = status === 'active' ? { startedAt: now } : status === 'ready' ? { readyAt: now } : status === 'completed' ? { completedAt: now } : {};
   const record = await runtime().updateRelease(id, { status, ...timestamps });
+  console.log(`${record.id}\t${record.status}\t${record.updatedAt}`);
+});
+release.command('complete <id>').description('Mark a ready release completed after human merge/release decisions are done').action(async id => {
+  const record = await runtime().updateRelease(id, { status: 'completed', completedAt: new Date().toISOString() });
   console.log(`${record.id}\t${record.status}\t${record.updatedAt}`);
 });
 release.command('prepare <id>').description('Ask the configured release VCS provider to prepare a release for human review').action(async id => {
@@ -285,11 +289,11 @@ release.command('prepare <id>').description('Ask the configured release VCS prov
 });
 
 const task = program.command('task');
-task.command('create <title>').option('-d, --description <text>').option('-c, --complexity <level>', 'trivial|small|medium|large', 'small').option('--issue', 'create GitHub issue').option('--release <id>', 'target one planned release by id').action(async (title, opts) => {
+task.command('create <title>').option('-d, --description <text>').option('-c, --complexity <level>', 'trivial|small|medium|large', 'small').option('--issue', 'create GitHub issue').option('--release <id>', 'target one planned or active release by id').action(async (title, opts) => {
   const t = await runtime().createTask(title, { description: opts.description, complexity: opts.complexity, createIssue: opts.issue, targetReleaseId: opts.release });
   console.log(`${t.id} ${t.status} ${t.title}${t.targetRelease ? ` release=${t.targetRelease.id}` : ''}`);
 });
-task.command('update <id>').description('Update task metadata').option('--title <title>').option('-d, --description <text>').option('-c, --complexity <level>', 'trivial|small|medium|large').option('--release <id>', 'target one planned release by id').option('--clear-release', 'remove the task release target').action(async (id, opts) => {
+task.command('update <id>').description('Update task metadata').option('--title <title>').option('-d, --description <text>').option('-c, --complexity <level>', 'trivial|small|medium|large').option('--release <id>', 'target one planned or active release by id').option('--clear-release', 'remove the task release target').action(async (id, opts) => {
   const t = await runtime().updateTask(id, { title: opts.title, description: opts.description, complexity: opts.complexity, targetReleaseId: opts.release, clearTargetRelease: opts.clearRelease });
   console.log(`${t.id} ${t.status} ${t.title}${t.targetRelease ? ` release=${t.targetRelease.id}` : ''}`);
 });

@@ -17,7 +17,7 @@ describe('GitHubScmProvider release VCS capability', () => {
       return fail(`unexpected ${args.join(' ')}`);
     });
 
-    const release = { id: 'rel-1', version: '1.2.3', status: 'preparing' as const, target: { kind: 'package', id: 'pkg' }, createdAt: 'now', updatedAt: 'now' };
+    const release = { id: 'rel-1', version: '1.2.3', status: 'active' as const, target: { kind: 'package', id: 'pkg' }, createdAt: 'now', updatedAt: 'now' };
     const target = await provider.ensureReleaseTarget({ release });
     const ref = await provider.resolveReleaseRef({ release, target });
     const review = await provider.prepareReleaseReview({ release, target, ref });
@@ -37,7 +37,7 @@ describe('GitHubScmProvider release VCS capability', () => {
       return fail(`unexpected ${args.join(' ')}`);
     });
 
-    const release = { id: 'rel-2', version: '2.0.0', status: 'preparing' as const, target: { kind: 'package', id: 'forge' }, createdAt: 'now', updatedAt: 'now' };
+    const release = { id: 'rel-2', version: '2.0.0', status: 'active' as const, target: { kind: 'package', id: 'forge' }, createdAt: 'now', updatedAt: 'now' };
     const ref = await provider.resolveReleaseRef({ release, target: await provider.ensureReleaseTarget({ release }) });
 
     expect(ref).toMatchObject({ ref: 'release/2.0.0', baseRef: 'main' });
