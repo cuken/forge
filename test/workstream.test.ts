@@ -7,7 +7,7 @@ import { FileTaskStore } from '../src/providers/store-filesystem/index.js';
 import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
 import { extractJsonBlock } from '../src/providers/planner-pi/index.js';
-import type { WorkstreamItem, WorkstreamPlannerProvider, WorkstreamPlanRequest, WorkstreamProvider } from '../src/core/workstream.js';
+import type { WorkstreamCompletionProvider, WorkstreamCompletionUpdate, WorkstreamItem, WorkstreamPlannerProvider, WorkstreamPlanRequest, WorkstreamProvider } from '../src/core/workstream.js';
 import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { SpecProvider } from '../src/core/spec.js';
 import type { AgentProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
@@ -18,6 +18,7 @@ class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as 
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
 class MemorySpec implements SpecProvider { id='spec.memory'; kind='spec' as const; async generateSpec(input:{task:Task}){ return { providerId: this.id, body: `# Generated spec\n\n${input.task.title}` }; } }
 class BrokenWorkstream implements WorkstreamProvider { id='workstream.broken'; kind='workstream' as const; async import(){ return []; } async list(): Promise<WorkstreamItem[]> { throw new Error('tracker unavailable'); } async update(){ throw new Error('tracker unavailable'); } }
+class RecordingWorkstreamCompletion implements WorkstreamCompletionProvider { id='workstream-completion.memory'; kind='workstream-completion' as const; updates: WorkstreamCompletionUpdate[] = []; async completeWorkstreamItem(input: WorkstreamCompletionUpdate) { this.updates.push(input); } }
 
 class MemoryPlanner implements WorkstreamPlannerProvider {
   id = 'workstream-planner.memory';
@@ -38,9 +39,9 @@ class MemoryPlanner implements WorkstreamPlannerProvider {
   }
 }
 
-async function makeRuntime(planner?: WorkstreamPlannerProvider) {
+async function makeRuntime(planner?: WorkstreamPlannerProvider, workstreamCompletion?: WorkstreamCompletionProvider) {
   const root = await mkdtemp(join(tmpdir(), 'forge-workstream-test-'));
-  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), spec: new MemorySpec(), workstream: new FileWorkstreamProvider(root), workstreamPlanner: planner });
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), spec: new MemorySpec(), workstream: new FileWorkstreamProvider(root), workstreamCompletion, workstreamPlanner: planner });
   return { rt, root };
 }
 
@@ -70,6 +71,18 @@ describe('workstream backlog', () => {
     const items = await rt.listWorkstream();
     expect(items.map(item => item.status)).toEqual(['queued', 'queued']);
     expect(items[0].taskId).toBe(tasks[0].id);
+  });
+
+  it('sends provider-neutral completion audit metadata when an accepted run completes a linked workstream item', async () => {
+    const completion = new RecordingWorkstreamCompletion();
+    const { rt, root } = await makeRuntime(undefined, completion);
+    await importItems(rt, root, [{ id: 'complete-me', title: 'Complete me', complexity: 'small' }]);
+    const [task] = await rt.enqueueWorkstream();
+
+    const [{ run }] = await rt.runReady(task.id);
+    await rt.acceptRun(run!, 'ship linked item');
+
+    expect(completion.updates).toEqual([{ itemId: 'complete-me', status: 'completed', acceptedRunId: run!, comment: 'accepted file.txt', commit: { providerId: 'change-set.memory', status: 'accepted', message: 'accepted file.txt' }, metadata: { taskId: task.id, taskTitle: 'Complete me' } }]);
   });
 
   it('does not create duplicate tasks when enqueue runs twice', async () => {

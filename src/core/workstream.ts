@@ -1,4 +1,4 @@
-import type { ForgeProvider, Task } from './types.js';
+import type { ForgeProvider, Json, Task } from './types.js';
 
 export interface WorkstreamItem {
   id: string;
@@ -19,6 +19,36 @@ export interface WorkstreamProvider extends ForgeProvider {
 
 export function hasWorkstream(provider: unknown): provider is WorkstreamProvider {
   return !!provider && typeof provider === 'object' && (provider as { kind?: unknown }).kind === 'workstream' && typeof (provider as { import?: unknown }).import === 'function' && typeof (provider as { list?: unknown }).list === 'function' && typeof (provider as { update?: unknown }).update === 'function';
+}
+
+export interface WorkstreamCompletionRef {
+  providerId?: string;
+  id?: string;
+  url?: string;
+  message?: string;
+  status?: string;
+}
+
+export interface WorkstreamCompletionUpdate {
+  itemId: string;
+  status: 'completed' | 'accepted' | 'closed' | string;
+  labels?: string[];
+  tags?: string[];
+  comment?: string;
+  body?: string;
+  acceptedRunId?: string;
+  commit?: WorkstreamCompletionRef;
+  sync?: WorkstreamCompletionRef;
+  metadata?: Record<string, Json>;
+}
+
+export interface WorkstreamCompletionProvider extends ForgeProvider {
+  kind: 'workstream-completion';
+  completeWorkstreamItem(input: WorkstreamCompletionUpdate): Promise<void>;
+}
+
+export function hasWorkstreamCompletion(provider: unknown): provider is WorkstreamCompletionProvider {
+  return !!provider && typeof provider === 'object' && (provider as { kind?: unknown }).kind === 'workstream-completion' && typeof (provider as { completeWorkstreamItem?: unknown }).completeWorkstreamItem === 'function';
 }
 
 export interface WorkstreamDraft {

@@ -18,6 +18,7 @@ Defined in `src/core/types.ts`:
 - `TaskDiscoveryProvider` — attach provider-neutral discovery metadata, including likely task resource scopes, when tasks are created
 - `LeaseProvider` — acquire and release provider-neutral resource scope leases around task runs
 - `WorkstreamProvider` — import and list provider-neutral roadmap/workstream backlog items before they are enqueued as Forge tasks
+- `WorkstreamCompletionProvider` — mark linked workstream items complete with provider-neutral audit metadata after an accepted run finishes the task
 - `WorkstreamPlannerProvider` — turn a natural-language goal into workstream items, optionally asking clarifying questions through a generic channel
 - `NotificationProvider` — receive provider-neutral run lifecycle notifications without coupling runtime orchestration to a delivery channel
 - `GateProvider` — publish pending human decisions to an external system of record and read provider-neutral decisions back
@@ -34,6 +35,7 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `LeaseProvider` — leases discovered resource scopes before workspace/isolation/agent execution and releases them after the run completes or fails
 - `WorkstreamProvider` — stores planned work items with dependencies and complexity for later task creation
 - `WorkstreamPlannerProvider` — plans workstream items from a prompt for `forge workstream plan`, relaying clarifying questions through the caller-supplied `ask` channel
+- `WorkstreamCompletionProvider` — receives `completeWorkstreamItem` updates for linked workstream items when `forge runs accept` accepts or confirms an empty changeset. Inputs are provider-neutral: `itemId`, generic completion `status`, optional `labels`/`tags`, optional `comment`/`body`, `acceptedRunId`, generic `commit`/`sync` references, and JSON `metadata` such as the Forge task id/title. Providers translate those fields into their own tracker concepts.
 - `NotificationProvider` — receives best-effort run lifecycle events such as started, workspace-created, environment-prepared, deferred, succeeded, and failed
 - `ReleaseVcsProvider` — prepares provider-neutral release records for human merge/release review without hardcoded branch behavior
 - `GateProvider` — bridges Forge approval gates to external systems without exposing tracker-specific concepts to core

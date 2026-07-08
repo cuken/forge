@@ -14,12 +14,12 @@ import { resolveTask } from './resolve.js';
 import { hasSpec, type SpecProvider } from './spec.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
-import { hasWorkstream, hasWorkstreamPlanner, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
+import { hasWorkstream, hasWorkstreamCompletion, hasWorkstreamPlanner, type WorkstreamCompletionProvider, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
 import type { AgentProvider, ForgeConfig, ForgeProvider, Json, ReleaseRecord, ReleaseStatus, ReleaseStore, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; releaseStore?: ReleaseStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; spec?: SpecProvider & ForgeProvider; notification?: NotificationProvider & ForgeProvider; lifecycle?: LifecycleHookProvider & ForgeProvider; gate?: GateProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; releaseStore?: ReleaseStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamCompletion?: WorkstreamCompletionProvider; workstreamPlanner?: WorkstreamPlannerProvider; spec?: SpecProvider & ForgeProvider; notification?: NotificationProvider & ForgeProvider; lifecycle?: LifecycleHookProvider & ForgeProvider; gate?: GateProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -28,13 +28,13 @@ export class ForgeRuntime {
     await this.deps.store.init();
     await this.deps.runStore?.init();
     await this.deps.releaseStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id, lifecycle: this.deps.lifecycle?.id, gate: this.deps.gate?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamCompletion: this.deps.workstreamCompletion?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id, lifecycle: this.deps.lifecycle?.id, gate: this.deps.gate?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.releaseStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner, this.deps.spec, this.deps.notification, this.deps.lifecycle, this.deps.gate].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.releaseStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamCompletion, this.deps.workstreamPlanner, this.deps.spec, this.deps.notification, this.deps.lifecycle, this.deps.gate].filter(Boolean); }
 
   private gateProvider(): GateProvider {
     const provider = this.providers().find(provider => hasGate(provider));
@@ -236,6 +236,25 @@ export class ForgeRuntime {
         // Lifecycle hooks are provider-owned side effects; provider failures must not alter core state.
       }
     }));
+  }
+
+  private async completeLinkedWorkstream(input: { task: Task; run: RunRecord; acceptance: AcceptChangeSetResult }) {
+    if (input.acceptance.status !== 'accepted' && input.acceptance.status !== 'empty') return;
+    const itemId = this.workstreamItemIdFromTask(input.task);
+    if (!itemId) return;
+    await Promise.all(this.providers().filter(provider => hasWorkstreamCompletion(provider)).map(provider => provider.completeWorkstreamItem({
+      itemId,
+      status: 'completed',
+      acceptedRunId: input.run.id,
+      comment: input.acceptance.message,
+      commit: { providerId: input.acceptance.providerId, status: input.acceptance.status, message: input.acceptance.message },
+      metadata: { taskId: input.task.id, taskTitle: input.task.title },
+    })));
+  }
+
+  private workstreamItemIdFromTask(task: Task): string | undefined {
+    const match = task.description?.match(/^Workstream item:\s*(.+)$/m);
+    return match?.[1]?.trim();
   }
 
   async leaseStatus() {
@@ -593,6 +612,7 @@ export class ForgeRuntime {
     const acceptedRun = await this.deps.runStore?.update(run.id, { acceptance: { acceptedAt: new Date().toISOString(), providerId: result.providerId, status: result.status, message: result.message } });
     const updatedTask = (result.status === 'accepted' || result.status === 'empty') ? await this.deps.store.update(run.taskId, { status: 'done' }) : task;
     await this.lifecycleHook('run.accepted', { task: updatedTask, run: acceptedRun ?? run, acceptance: result });
+    await this.completeLinkedWorkstream({ task: updatedTask, run: acceptedRun ?? run, acceptance: result });
     return result;
   }
 

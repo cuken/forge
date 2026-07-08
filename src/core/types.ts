@@ -41,6 +41,7 @@ export interface ForgeConfig {
     taskDiscovery?: string;
     lease?: string;
     workstream?: string;
+    workstreamCompletion?: string;
     workstreamPlanner?: string;
     spec?: string;
     notification?: string;
