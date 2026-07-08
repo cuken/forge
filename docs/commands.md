@@ -74,7 +74,7 @@ forge status
 Example output:
 
 ```text
-awaiting approval: Add TOML config -> forge task approve 'toml'
+awaiting approval: Add TOML config [release 1-2-3-package-forge] -> forge task approve 'toml'
 awaiting validation: Add status command -> forge runs validate 'status'
 deferred: Update shared provider -> forge task run 'shared'
 blocked workstream: Add final docs (waiting on core-slice) -> forge workstream enqueue final-docs
@@ -216,15 +216,20 @@ Options:
 - `-d, --description <text>`
 - `-c, --complexity <trivial|small|medium|large>`
 - `--issue` — ask configured SCM provider to create an issue
+- `--release <id>` — target exactly one existing release whose status is `planned`; Forge stores the release id and version on the task
 
 Complexity policy:
 
 - `trivial` and `small` start as `ready`
 - `medium` and `large` start as `needs-spec`
 
+## `forge task update <id>`
+
+Updates task metadata. Use `--release <id>` to retarget a task to exactly one existing planned release, or `--clear-release` to remove the target. Passing a missing release, a non-`planned` release, or both release options fails without changing the task.
+
 ## `forge task list`
 
-Lists local tasks with ID, status, complexity, title, and discovered resource scopes when present.
+Lists local tasks with ID, status, complexity, title, the targeted release when present, and discovered resource scopes when present.
 
 ## `forge task spec <id> [body]`
 

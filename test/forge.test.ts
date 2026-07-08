@@ -108,6 +108,24 @@ describe('Forge vertical slice', () => {
     await expect(readFile(join(root, '.forge', 'releases', `${release.id}.json`), 'utf8')).resolves.toContain('first-class release state');
   });
 
+  it('validates and persists one planned release target on task create and update', async () => {
+    const { rt } = await makeRuntime();
+    await rt.init('demo');
+    const release = await rt.createRelease({ version: '1.2.3', target: { kind: 'package', id: 'forge' } });
+
+    const created = await rt.createTask('release targeted fix', { targetReleaseId: release.id });
+    expect(created.targetRelease).toEqual({ id: release.id, version: '1.2.3' });
+    await expect(rt.deps.store.get(created.id)).resolves.toMatchObject({ targetRelease: { id: release.id, version: '1.2.3' } });
+
+    const next = await rt.createRelease({ version: '1.2.4', target: { kind: 'package', id: 'forge' } });
+    const updated = await rt.updateTask(created.id, { targetReleaseId: next.id });
+    expect(updated.targetRelease).toEqual({ id: next.id, version: '1.2.4' });
+
+    await rt.updateRelease(next.id, { status: 'released' });
+    await expect(rt.createTask('bad release task', { targetReleaseId: 'missing' })).rejects.toThrow('Release not found');
+    await expect(rt.updateTask(created.id, { targetReleaseId: next.id })).rejects.toThrow('not planned');
+  });
+
   it('creates small tasks as ready and medium tasks behind spec gate', async () => {
     const { rt } = await makeRuntime();
     await rt.init('demo');

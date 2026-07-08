@@ -201,24 +201,25 @@ export class ForgeRuntime {
     const taskById = new Map(tasks.map(task => [task.id, task]));
     const taskTitles = tasks.map(task => task.title);
     const taskRef = (task: Task) => this.shellQuote(this.shortFragment(task.title, taskTitles));
+    const releaseLabel = (task?: Task) => task?.targetRelease ? ` [release ${task.targetRelease.id}]` : '';
 
-    for (const task of tasks.filter(task => task.status === 'needs-spec')) lines.push(`needs spec: ${task.title} -> forge task spec ${taskRef(task)} '<spec body>'`);
-    for (const task of tasks.filter(task => task.status === 'awaiting-approval')) lines.push(`awaiting approval: ${task.title} -> forge task approve ${taskRef(task)}`);
+    for (const task of tasks.filter(task => task.status === 'needs-spec')) lines.push(`needs spec: ${task.title}${releaseLabel(task)} -> forge task spec ${taskRef(task)} '<spec body>'`);
+    for (const task of tasks.filter(task => task.status === 'awaiting-approval')) lines.push(`awaiting approval: ${task.title}${releaseLabel(task)} -> forge task approve ${taskRef(task)}`);
 
     const succeeded = runs.filter(run => run.status === 'succeeded' && !run.acceptance);
     for (const run of succeeded) {
       const task = taskById.get(run.taskId);
       if (task?.status !== 'reviewing') continue;
-      lines.push(`awaiting review: ${run.taskTitle} -> ${this.runCommand(run, 'review', succeeded)}`);
+      lines.push(`awaiting review: ${run.taskTitle}${releaseLabel(task)} -> ${this.runCommand(run, 'review', succeeded)}`);
       const validationPassed = run.validation?.results.length === 0 || run.validation?.results.every(result => result.status === 'pass');
-      if (!run.validation || run.validation.results.some(result => result.status === 'fail')) lines.push(`awaiting validation: ${run.taskTitle} -> ${this.runCommand(run, 'validate', succeeded)}`);
-      if (validationPassed) lines.push(`awaiting accept: ${run.taskTitle} -> ${this.runCommand(run, 'accept', succeeded)} -m ${this.shellQuote(`accept ${this.shortFragment(run.taskTitle, succeeded.map(peer => peer.taskTitle))}`)}`);
+      if (!run.validation || run.validation.results.some(result => result.status === 'fail')) lines.push(`awaiting validation: ${run.taskTitle}${releaseLabel(task)} -> ${this.runCommand(run, 'validate', succeeded)}`);
+      if (validationPassed) lines.push(`awaiting accept: ${run.taskTitle}${releaseLabel(task)} -> ${this.runCommand(run, 'accept', succeeded)} -m ${this.shellQuote(`accept ${this.shortFragment(run.taskTitle, succeeded.map(peer => peer.taskTitle))}`)}`);
     }
 
     for (const run of runs.filter(run => run.status === 'deferred')) {
       const task = taskById.get(run.taskId);
       const command = task ? `forge task run ${taskRef(task)}` : this.runCommand(run, 'show', runs);
-      lines.push(`deferred: ${run.taskTitle} -> ${command}`);
+      lines.push(`deferred: ${run.taskTitle}${releaseLabel(task)} -> ${command}`);
     }
 
     const workstream = this.providers().find(provider => hasWorkstream(provider));
@@ -328,14 +329,35 @@ export class ForgeRuntime {
     return lines.length ? lines.join('\n\n') : undefined;
   }
 
-  async createTask(title: string, options: { description?: string; complexity?: Task['complexity']; createIssue?: boolean } = {}) {
+  private async resolvePlannedReleaseTarget(releaseId?: string): Promise<Task['targetRelease'] | undefined> {
+    if (!releaseId) return undefined;
+    const release = await this.releaseStore().get(releaseId);
+    if (!release) throw new Error(`Release not found: ${releaseId}`);
+    if (release.status !== 'planned') throw new Error(`Release ${releaseId} is ${release.status}, not planned`);
+    return { id: release.id, version: release.version };
+  }
+
+  async createTask(title: string, options: { description?: string; complexity?: Task['complexity']; createIssue?: boolean; targetReleaseId?: string } = {}) {
     const complexity = options.complexity ?? 'small';
     const status: Task['status'] = complexity === 'medium' || complexity === 'large' ? 'needs-spec' : 'ready';
     let issue;
     if (options.createIssue && this.deps.scm) issue = await this.deps.scm.createIssue({ title, body: options.description ?? title });
     const discoveryProvider = this.providers().find(provider => hasTaskDiscovery(provider));
     const discovery = discoveryProvider && hasTaskDiscovery(discoveryProvider) ? await discoveryProvider.discoverTask({ title, description: options.description, complexity }) : undefined;
-    return this.deps.store.create({ title, description: options.description, complexity, status, issue, contextRefs: [], discovery });
+    const targetRelease = await this.resolvePlannedReleaseTarget(options.targetReleaseId);
+    return this.deps.store.create({ title, description: options.description, complexity, status, issue, contextRefs: [], discovery, targetRelease });
+  }
+
+  async updateTask(taskIdOrPattern: string, patch: { title?: string; description?: string; complexity?: Task['complexity']; targetReleaseId?: string; clearTargetRelease?: boolean }) {
+    const task = await resolveTask(this.deps.store, taskIdOrPattern);
+    if (patch.targetReleaseId && patch.clearTargetRelease) throw new Error('Cannot set and clear a target release in the same update');
+    const targetRelease = patch.clearTargetRelease ? undefined : await this.resolvePlannedReleaseTarget(patch.targetReleaseId);
+    const next: Partial<Task> = {};
+    if (patch.title !== undefined) next.title = patch.title;
+    if (patch.description !== undefined) next.description = patch.description;
+    if (patch.complexity !== undefined) next.complexity = patch.complexity;
+    if (patch.targetReleaseId || patch.clearTargetRelease) next.targetRelease = targetRelease;
+    return this.deps.store.update(task.id, next);
   }
 
   async generateSpec(taskIdOrPattern: string) {

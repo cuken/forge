@@ -30,6 +30,20 @@ describe('release CLI commands', () => {
     await rm(cwd, { recursive: true, force: true });
   });
 
+  it('creates a task targeting a planned release and shows the target in task list output', async () => {
+    await runForge(['release', 'create', '2.0.0', '--target-kind', 'package', '--target-id', 'forge']);
+
+    const created = await runForge(['task', 'create', 'release fix', '--release', '2-0-0-package-forge']);
+    expect(created).toMatch(/release=2-0-0-package-forge$/);
+
+    const listed = await runForge(['task', 'list']);
+    expect(listed).toContain('\trelease=2-0-0-package-forge');
+
+    await runForge(['release', 'create', '2.0.1', '--target-kind', 'package', '--target-id', 'forge']);
+    const updated = await runForge(['task', 'update', 'release fix', '--release', '2-0-1-package-forge']);
+    expect(updated).toMatch(/release=2-0-1-package-forge$/);
+  });
+
   it('creates, lists, filters, and shows provider-neutral release records', async () => {
     const created = await runForge(['release', 'create', '1.2.3', '--target-kind', 'package', '--target-id', 'forge', '--target-name', 'Forge CLI', '--notes', 'ship release CLI']);
 

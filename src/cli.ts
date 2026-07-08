@@ -259,11 +259,15 @@ release.command('status <id> <status>').description('Update a release lifecycle 
 });
 
 const task = program.command('task');
-task.command('create <title>').option('-d, --description <text>').option('-c, --complexity <level>', 'trivial|small|medium|large', 'small').option('--issue', 'create GitHub issue').action(async (title, opts) => {
-  const t = await runtime().createTask(title, { description: opts.description, complexity: opts.complexity, createIssue: opts.issue });
-  console.log(`${t.id} ${t.status} ${t.title}`);
+task.command('create <title>').option('-d, --description <text>').option('-c, --complexity <level>', 'trivial|small|medium|large', 'small').option('--issue', 'create GitHub issue').option('--release <id>', 'target one planned release by id').action(async (title, opts) => {
+  const t = await runtime().createTask(title, { description: opts.description, complexity: opts.complexity, createIssue: opts.issue, targetReleaseId: opts.release });
+  console.log(`${t.id} ${t.status} ${t.title}${t.targetRelease ? ` release=${t.targetRelease.id}` : ''}`);
 });
-task.command('list').action(async () => { for (const t of await runtime().deps.store.list()) console.log(`${t.id}\t${t.status}\t${t.complexity}\t${t.title}${t.discovery?.resourceScopes.length ? `\tscopes=${t.discovery.resourceScopes.map(scope => `${scope.kind}:${scope.value}`).join(',')}` : ''}`); });
+task.command('update <id>').description('Update task metadata').option('--title <title>').option('-d, --description <text>').option('-c, --complexity <level>', 'trivial|small|medium|large').option('--release <id>', 'target one planned release by id').option('--clear-release', 'remove the task release target').action(async (id, opts) => {
+  const t = await runtime().updateTask(id, { title: opts.title, description: opts.description, complexity: opts.complexity, targetReleaseId: opts.release, clearTargetRelease: opts.clearRelease });
+  console.log(`${t.id} ${t.status} ${t.title}${t.targetRelease ? ` release=${t.targetRelease.id}` : ''}`);
+});
+task.command('list').action(async () => { for (const t of await runtime().deps.store.list()) console.log(`${t.id}\t${t.status}\t${t.complexity}\t${t.title}${t.targetRelease ? `\trelease=${t.targetRelease.id}` : ''}${t.discovery?.resourceScopes.length ? `\tscopes=${t.discovery.resourceScopes.map(scope => `${scope.kind}:${scope.value}`).join(',')}` : ''}`); });
 task.command('spec <id> [body]').option('--generate', 'generate the spec with the configured spec provider').action(async (id, body, opts) => { const t = opts.generate ? await runtime().generateSpec(id) : await runtime().writeSpec(id, body ?? ''); console.log(`${t.id} ${t.status} ${t.spec?.path}`); });
 task.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
 task.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern, chunk => process.stdout.write(chunk)), null, 2)); });

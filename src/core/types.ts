@@ -17,8 +17,10 @@ export interface Task {
   spec?: SpecRef;
   contextRefs: string[];
   discovery?: TaskDiscoveryMetadata;
+  targetRelease?: TaskReleaseTarget;
 }
 
+export interface TaskReleaseTarget { id: string; version: string; }
 export interface IssueRef { provider: string; id: string; url?: string; }
 export interface SpecRef { path: string; approved: boolean; approvedAt?: string; }
 

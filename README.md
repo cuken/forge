@@ -25,6 +25,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - interactive workstream planning through a generic planner provider (pi-backed interview by default)
 - provider-neutral run lifecycle notifications with configurable provider/channel selection
 - provider-neutral release records with version, lifecycle status, target metadata, and timestamps
+- work items can target exactly one planned release and show that target in task/status output
 
 ## Self-augmentation docs
 
@@ -77,6 +78,8 @@ forge workstream list
 forge workstream enqueue
 forge build update forge so that it honors toml files in the config instead of json config files
 forge task create "Add feature" --complexity small
+forge task create "Fix for next release" --release 1-2-3-package-forge-cli
+forge task update "Fix for next release" --release 1-2-4-package-forge-cli
 forge task create "Risky feature" --complexity medium
 forge task spec <id> "# Spec..."
 forge approve toml
