@@ -1,16 +1,64 @@
+import { access, readFile } from 'node:fs/promises';
+import { isAbsolute, resolve } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { ChangeSetProvider } from '../../core/changes.js';
+import type { DoctorProvider, HealthCheck } from '../../core/health.js';
 import type { RunRecord } from '../../core/types.js';
+import { runCommand } from '../../util/command.js';
 
 function requireWorkspace(run: RunRecord) {
   if (!run.workspace?.path || !run.workspace.branch) throw new Error(`Run ${run.id} has no workspace metadata`);
   return run.workspace;
 }
 
-export class GitWorktreeChangeSetProvider implements ChangeSetProvider {
+type GitWorktreeProbe = {
+  readFile?: typeof readFile;
+  access?: typeof access;
+  runCommand?: typeof runCommand;
+};
+
+export class GitWorktreeChangeSetProvider implements ChangeSetProvider, DoctorProvider {
   id = 'change-set.git-worktree';
   kind = 'change-set' as const;
-  constructor(private root = process.cwd()) {}
+  private probes: Required<GitWorktreeProbe>;
+  constructor(private root = process.cwd(), probes: GitWorktreeProbe = {}) {
+    this.probes = { readFile: probes.readFile ?? readFile, access: probes.access ?? access, runCommand: probes.runCommand ?? runCommand };
+  }
+
+  checks(): HealthCheck[] {
+    return [{
+      id: `${this.id}:metadata`,
+      label: 'Git worktree metadata for acceptance',
+      run: async () => {
+        const revParse = await this.probes.runCommand('git', ['rev-parse', '--git-dir', '--git-common-dir'], { cwd: this.root });
+        if (revParse.exitCode !== 0) return { id: `${this.id}:metadata`, status: 'fail' as const, message: 'git metadata is not readable from this checkout', detail: revParse.stderr || revParse.stdout };
+
+        const [gitDirLine, commonDirLine] = revParse.stdout.split('\n').map(line => line.trim()).filter(Boolean);
+        const gitDirs = [gitDirLine, commonDirLine].filter(Boolean).map(dir => isAbsolute(dir) ? dir : resolve(this.root, dir));
+        try {
+          await Promise.all(gitDirs.map(dir => this.probes.access(dir)));
+        } catch (error) {
+          return { id: `${this.id}:metadata`, status: 'fail' as const, message: 'git metadata path is inaccessible from this environment', detail: error instanceof Error ? error.message : String(error) };
+        }
+
+        try {
+          const gitFile = await this.probes.readFile(resolve(this.root, '.git'), 'utf8');
+          const match = gitFile.match(/^gitdir:\s*(.+)$/m);
+          if (match) {
+            const gitDir = isAbsolute(match[1].trim()) ? match[1].trim() : resolve(this.root, match[1].trim());
+            await this.probes.access(gitDir);
+          }
+        } catch (error) {
+          if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'EISDIR') {
+            return { id: `${this.id}:metadata`, status: 'pass' as const, message: 'git metadata directory is accessible for review and accept' };
+          }
+          return { id: `${this.id}:metadata`, status: 'fail' as const, message: '.git metadata pointer is inaccessible from this environment', detail: error instanceof Error ? error.message : String(error) };
+        }
+
+        return { id: `${this.id}:metadata`, status: 'pass' as const, message: 'git worktree metadata is accessible for review and accept' };
+      },
+    }];
+  }
 
   async review(input: { run: RunRecord }) {
     const ws = requireWorkspace(input.run);

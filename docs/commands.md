@@ -34,6 +34,7 @@ channel = "stderr" # or "stdout"
 Unknown notification providers or channels fail during CLI wiring before commands start work.
 
 - `vcs.git`: git binary, repository, worktree support
+- `change-set.git-worktree`: git metadata and worktree `.git` pointer accessibility needed by `forge runs review` and `forge runs accept`; this catches container/worktree mounts where Git can see the checkout but the referenced metadata is missing or inaccessible
 - selected isolation provider via `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml`
 - `agent.pi`: pi binary, pi version
 - `scm.github`: gh binary, gh auth, repo detection
