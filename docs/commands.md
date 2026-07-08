@@ -43,6 +43,14 @@ channel = "audit"
 
 It appends run lifecycle records to `.forge/audit.log` as JSON Lines. Unknown notification providers or channels fail during CLI wiring before commands start work. Run failure notifications are sent for both non-zero agent exits and execution errors; providers receive a neutral `metadata.failureReason` value and, for non-zero exits, `metadata.exitCode`.
 
+End-to-end notification workflow:
+
+1. Configure `[providers] notification` and `[notifications] channel` in `.forge/config.toml`.
+2. Run `forge doctor` before task execution. The selected notification provider reports whether Forge can write to the configured channel, so console stream or audit-log problems are visible before lifecycle events are emitted.
+3. Run work with the normal task commands. Forge emits provider-neutral lifecycle notifications as the run starts, creates its workspace, prepares its environment, defers, succeeds, or fails.
+4. Receive notifications from the configured channel: console notifications are printed to `stderr` or `stdout`; filesystem notifications are durable audit records in `.forge/audit.log`.
+5. Audit filesystem notifications by reading `.forge/audit.log` as JSON Lines. Each line is one event and can be filtered by `event`, `task.id`, `run.id`, or failure metadata.
+
 - `vcs.git`: git binary, repository, worktree support
 - `change-set.git-worktree`: git metadata and worktree `.git` pointer accessibility needed by `forge runs review` and `forge runs accept`; this catches container/worktree mounts where Git can see the checkout but the referenced metadata is missing or inaccessible
 - selected isolation provider via `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml`
