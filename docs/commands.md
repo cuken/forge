@@ -218,6 +218,16 @@ Release lifecycle vocabulary:
 
 `forge release prepare <id>` calls the configured generic `ReleaseVcsProvider` to ensure the release target exists, resolve the provider-owned working ref, and prepare a human review artifact. Forge does not assume branch names or code-host behavior and never merges automatically. Providers return readiness (`ready` or `blocked`), blocking work items, optional review URLs, and provider-specific next steps; Forge stores those details in release metadata and moves the release to `ready` only when preparation succeeds. Blocked preparation leaves the release in `preparing` so humans can resolve the listed items and rerun the command. With `scm.github`, `[github] releaseBranchTemplate` derives the branch from `{id}`, `{version}`, `{target.kind}`, and `{target.id}` (default `release/{version}`), `[github] releaseBaseBranch` controls the source branch when Forge needs to create it, and output points humans to the compare view for manual review/merge.
 
+End-to-end targeted release flow:
+
+1. `forge release create <version> --target-kind <kind> --target-id <id>` creates the provider-neutral release in `planned` status.
+2. `forge task create <title> --release <release-id>` or `forge task update <task> --release <release-id>` attaches exactly one planned release to each work item. Forge stores only the release id/version on the task; it does not store provider branch names on tasks.
+3. `forge task run-ready` runs targeted and untargeted work through the same gates. For targeted tasks, the runtime asks `ReleaseVcsProvider` for the release ref, passes it to `WorkspaceProvider.create({ baseBranch })`, and includes release id/version/ref in the agent context.
+4. Humans continue the normal run review loop: `forge runs validate`, `forge runs accept --dry-run`, and `forge runs accept`. Accepted targeted work lands on the provider-owned release working ref because the run workspace was based there.
+5. `forge release prepare <release-id>` creates or verifies the provider review surface and reports `ready` or `blocked`. A ready release is prepared for human review/merge, not automatically delivered.
+
+GitHub implementation details: `scm.github` shells out to `gh`, resolves the repository from `[github] owner`/`repo` or the current checkout, creates the release branch on GitHub when it is missing by resolving the configured base branch SHA, returns the branch as the release ref, and returns a compare URL of the form `https://github.com/<owner>/<repo>/compare/<base>...<head>` with manual merge next steps.
+
 ## `forge task create <title>`
 
 Creates a task in the configured `TaskStore`. If a `TaskDiscoveryProvider` is configured, Forge also stores task discovery metadata with likely resource scopes.
