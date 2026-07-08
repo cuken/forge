@@ -45,6 +45,33 @@ export interface TaskStore extends ForgeProvider {
   update(id: string, patch: Partial<Task>): Promise<Task>;
 }
 
+export interface RunRecord {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  status: 'running' | 'succeeded' | 'failed';
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  workspace?: { id: string; path: string; branch: string };
+  environment?: ExecutionEnvironment;
+  agentId: string;
+  exitCode?: number;
+  logPath: string;
+  error?: string;
+}
+
+export interface RunStore extends ForgeProvider {
+  kind: 'run-store';
+  init(): Promise<void>;
+  start(input: { task: Task; agentId: string }): Promise<RunRecord>;
+  appendLog(id: string, chunk: string): Promise<void>;
+  update(id: string, patch: Partial<RunRecord>): Promise<RunRecord>;
+  get(id: string): Promise<RunRecord | null>;
+  list(input?: { taskId?: string }): Promise<RunRecord[]>;
+  readLog(id: string): Promise<string>;
+}
+
 export interface VcsProvider extends ForgeProvider {
   kind: 'vcs';
   isRepo(): Promise<boolean>;

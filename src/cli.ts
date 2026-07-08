@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { basename } from 'node:path';
 import { ForgeRuntime } from './core/forge.js';
 import { FileTaskStore } from './providers/store-filesystem/index.js';
+import { FileRunStore } from './providers/store-filesystem/runs.js';
 import { GitVcsProvider } from './providers/vcs-git/index.js';
 import { GitWorktreeProvider } from './providers/workspace-git-worktree/index.js';
 import { PiAgentProvider } from './providers/agent-pi/index.js';
@@ -21,7 +22,7 @@ function isolationProvider() {
 }
 
 function runtime() {
-  return new ForgeRuntime({ store: new FileTaskStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider() });
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider() });
 }
 
 const program = new Command();
@@ -88,6 +89,18 @@ task.command('spec <id> <body>').action(async (id, body) => { const t = await ru
 task.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
 task.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern, chunk => process.stdout.write(chunk)), null, 2)); });
 task.command('run-ready').action(async () => { console.log(JSON.stringify(await runtime().runReady(), null, 2)); });
+
+const run = program.command('run-history').alias('runs').description('Inspect durable task run records');
+run.command('list').option('--task <id>', 'filter by task id').action(async opts => {
+  const store = runtime().deps.runStore;
+  if (!store) throw new Error('No run store configured');
+  for (const r of await store.list({ taskId: opts.task })) console.log(`${r.id}\t${r.status}\t${r.taskId}\t${r.startedAt}\t${r.finishedAt ?? ''}\t${r.taskTitle}`);
+});
+run.command('log <id>').description('Print captured agent output for a run').action(async id => {
+  const store = runtime().deps.runStore;
+  if (!store) throw new Error('No run store configured');
+  process.stdout.write(await store.readLog(id));
+});
 
 program.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
 program.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern, chunk => process.stdout.write(chunk)), null, 2)); });

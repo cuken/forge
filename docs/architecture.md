@@ -22,7 +22,7 @@ Pi keeps a small harness and makes behavior discoverable through project instruc
 
 - **Task** — desired work with status, complexity, optional issue, optional spec, and context refs.
 - **Spec** — human or machine-approved design/evidence gate before execution.
-- **Run** — one execution attempt by an agent.
+- **Run** — one durable execution attempt by an agent, with metadata in `.forge/runs/` and captured output in `.forge/logs/`.
 - **Workspace** — isolated filesystem/repo location for a task.
 - **Execution environment** — provider-prepared safety boundary where the agent process runs. This may be the host worktree, a container, a remote VM, or another sandbox.
 - **Provider** — implementation of an external capability.
@@ -56,7 +56,7 @@ await git.push('upstream', 'main');
 - `forge task create` creates local tasks and optionally GitHub issues.
 - `forge task spec` writes a spec file and moves a task to approval.
 - `forge task approve` marks the spec approved.
-- `forge task run-ready` creates worktrees, prepares an execution environment, and invokes the configured agent for ready tasks. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
+- `forge task run-ready` creates worktrees, prepares an execution environment, invokes the configured agent for ready tasks, and records durable run metadata/logs for history inspection. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
 
 ## Extension direction
 

@@ -148,6 +148,20 @@ For each ready task:
 3. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman`. The host provider returns the worktree directly; container providers own setup hooks, readiness checks, command delivery, and cleanup details. The Podman provider can run agent commands through `podman exec` once its retrying readiness command passes.
 4. Ask `AgentProvider` to run with task/workspace/environment context.
 5. Ask the isolation provider to clean up a prepared environment after the agent attempt.
-6. Mark task `reviewing` on success or `failed` on failure.
+6. Append durable run output to `.forge/logs/<run-id>.log` while the agent runs.
+7. Persist a durable run record in `.forge/runs/<run-id>.json` with task, workspace, environment, agent, status, exit code, and log path metadata.
+8. Mark task `reviewing` on success or `failed` on failure.
 
 Future implementations should replace sequential dispatch with a graph scheduler while preserving provider boundaries.
+
+## `forge runs list`
+
+Alias group: `forge run-history list`.
+
+Lists durable run records with ID, status, task ID, start/finish timestamps, and task title. Use `--task <id>` to filter to one task.
+
+## `forge runs log <id>`
+
+Alias group: `forge run-history log <id>`.
+
+Prints captured output for a durable run from `.forge/logs/<run-id>.log` so users can inspect agent output after the run finishes.

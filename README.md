@@ -9,7 +9,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - isolation provider readiness reporting via `forge isolation status`
 - provider-declared sync tasks via `forge sync`
 - natural-language build flow via `forge build`
-- filesystem task store
+- filesystem task and run-history stores
 - Git VCS provider
 - Git worktree workspace provider
 - host execution isolation provider
@@ -65,6 +65,8 @@ forge task create "Risky feature" --complexity medium
 forge task spec <id> "# Spec..."
 forge approve toml
 forge run toml
+forge runs list
+forge runs log <run-id>
 forge task approve <id>
 forge task run-ready
 ```
