@@ -29,6 +29,7 @@ Pi keeps a small harness and makes behavior discoverable through project instruc
 - **Capability** — optional interface a provider can implement, such as health checks or sync tasks.
 - **Context** — reusable project/task knowledge to reduce repeated repo discovery.
 - **Sync** — provider-declared reconciliation between local state and declared upstream systems.
+- **Change set** — provider-neutral summary and acceptance hook for changes produced by a completed run.
 - **Build plan** — provider-generated translation from a natural-language request into task complexity, spec policy, and execution flow.
 
 ## Boundary rule
@@ -57,6 +58,7 @@ await git.push('upstream', 'main');
 - `forge task spec` writes a spec file and moves a task to approval.
 - `forge task approve` marks the spec approved.
 - `forge task run-ready` creates worktrees, prepares an execution environment, invokes the configured agent for ready tasks, and records durable run metadata/logs for history inspection. Host, Docker, and Podman isolation providers are implemented behind the generic `IsolationProvider` contract.
+- `forge runs review` and `forge runs accept` call a generic `ChangeSetProvider` to inspect and accept completed run output without embedding Git behavior in the runtime.
 
 ## Extension direction
 

@@ -12,10 +12,11 @@ Defined in `src/core/types.ts`:
 - `IsolationProvider` — prepare the execution environment/safety boundary for agent processes
 - `AgentProvider` — execute agent work
 - `ScmProvider` — source-control-management systems such as GitHub issues
+- `ChangeSetProvider` — review and accept changes produced by completed runs
 
 ## Current optional capabilities
 
-Defined in `src/core/health.ts` and `src/core/sync.ts`:
+Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability files:
 
 - `DoctorProvider` — declares environment checks for `forge doctor`; isolation providers also use these checks for `forge isolation status`
 - `SyncProvider` — declares ordered sync tasks for `forge sync`
@@ -79,7 +80,7 @@ Initial implementation: `build-planner.heuristic`. Future implementations can su
 - `src/providers/build-heuristic` estimates request complexity and drafts specs for complex tasks.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
-- `src/providers/workspace-git-worktree` creates one Git worktree per task.
+- `src/providers/workspace-git-worktree` creates one Git worktree per task and provides `change-set.git-worktree` for reviewing changed files and accepting run branches back into the project checkout. New configs record this provider as `providers.changeSet`.
 - `src/providers/isolation-host` runs agents directly on the host worktree and warns that it is not a sandbox.
 - `src/providers/isolation-docker` prepares a Docker container for a task workspace, bind-mounts the workspace at `/workspace` by default, starts the container with network disabled unless policy requests inherited networking, and removes the container during cleanup. It implements `DoctorProvider` with a Docker daemon check.
 - `src/providers/isolation-podman` prepares a Podman container with the task workspace bind-mounted, can run provider-owned setup hooks, verifies readiness with a retrying readiness command, exposes an environment executor that runs agent commands through `podman exec`, declares Podman doctor checks, and removes the container during isolation cleanup. Default image is `localhost/forge-agent-pi:latest`; build it with `npm run podman:image` or configure `FORGE_PODMAN_IMAGE`, `FORGE_PODMAN_READY`, and `FORGE_PODMAN_READY_ATTEMPTS`. Workspace mounts default to `rw,Z`/`ro,Z` for rootless Podman on SELinux systems. By default the provider copies the host pi agent config into `/root/.pi/agent` so containerized `pi` can use the same auth while keeping session writes inside the ephemeral container; disable with `FORGE_PODMAN_MOUNT_PI_CONFIG=0` or override source with `FORGE_PODMAN_PI_CONFIG`.

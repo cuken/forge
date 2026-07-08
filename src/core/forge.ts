@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
+import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type ChangeSetSummary } from './changes.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { IsolationProvider, IsolationStatus } from './isolation.js';
 import { resolveTask } from './resolve.js';
@@ -9,7 +10,7 @@ import type { AgentProvider, ForgeConfig, ForgeProvider, RunStore, ScmProvider, 
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -17,13 +18,13 @@ export class ForgeRuntime {
     await this.deps.vcs.init();
     await this.deps.store.init();
     await this.deps.runStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id }, pi: { command: 'pi', args: ['-p'] } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id }, pi: { command: 'pi', args: ['-p'] } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet].filter(Boolean); }
 
   async doctor(): Promise<HealthCheckResult[]> {
     const checks = this.providers().flatMap(provider => hasDoctor(provider) ? provider.checks() : []);
@@ -93,6 +94,37 @@ export class ForgeRuntime {
     const task = taskIdOrPattern ? await resolveTask(this.deps.store, taskIdOrPattern) : await resolveTask(this.deps.store, undefined, 'ready');
     if (task.status !== 'ready') throw new Error(`Task is ${task.status}, not ready`);
     return this.runReady(task.id, observer);
+  }
+
+  private changeSetProvider(): ChangeSetProvider {
+    const provider = this.providers().find(provider => hasChangeSet(provider));
+    if (!provider || !hasChangeSet(provider)) throw new Error('No change set provider configured');
+    return provider;
+  }
+
+  private async resolveRun(idOrPrefix: string) {
+    if (!this.deps.runStore) throw new Error('No run store configured');
+    const exact = await this.deps.runStore.get(idOrPrefix);
+    if (exact) return exact;
+    const matches = (await this.deps.runStore.list()).filter(run => run.id.startsWith(idOrPrefix) || run.taskId.startsWith(idOrPrefix));
+    if (matches.length !== 1) throw new Error(matches.length === 0 ? `No run matches '${idOrPrefix}'` : `Multiple runs match '${idOrPrefix}'`);
+    return matches[0];
+  }
+
+  async reviewRun(idOrPrefix: string): Promise<ChangeSetSummary> {
+    const run = await this.resolveRun(idOrPrefix);
+    if (run.status !== 'succeeded') throw new Error(`Run ${run.id} is ${run.status}, not succeeded`);
+    return this.changeSetProvider().review({ run });
+  }
+
+  async acceptRun(idOrPrefix: string, message?: string): Promise<AcceptChangeSetResult> {
+    const run = await this.resolveRun(idOrPrefix);
+    if (run.status !== 'succeeded') throw new Error(`Run ${run.id} is ${run.status}, not succeeded`);
+    const task = await this.deps.store.get(run.taskId);
+    if (!task || task.status !== 'reviewing') throw new Error(`Task ${run.taskId} is ${task?.status ?? 'missing'}, not reviewing`);
+    const result = await this.changeSetProvider().accept({ run, message });
+    await this.deps.store.update(run.taskId, { status: 'done' });
+    return result;
   }
 
   async runReady(taskId?: string, observer?: (event: string) => void) {

@@ -171,3 +171,17 @@ Lists durable run records with ID, status, task ID, start/finish timestamps, and
 Alias group: `forge run-history log <id>`.
 
 Prints captured output for a durable run from `.forge/logs/<run-id>.log` so users can inspect agent output after the run finishes.
+
+## `forge runs review <id>`
+
+Summarizes the provider-neutral change set for a succeeded run. The runtime calls the configured `ChangeSetProvider`; the built-in Git worktree implementation reports changed files, diff stats, and name-status output from the run workspace.
+
+## `forge runs accept <id>`
+
+Accepts the provider-neutral change set for a succeeded run whose task is `reviewing`, then marks the task `done`.
+
+Options:
+
+- `-m, --message <message>` — accept/commit message passed to the change set provider
+
+The built-in Git worktree implementation stages and commits workspace changes on the run branch, then merges that branch into the project checkout.

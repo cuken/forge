@@ -6,6 +6,7 @@ import { FileTaskStore } from './providers/store-filesystem/index.js';
 import { FileRunStore } from './providers/store-filesystem/runs.js';
 import { GitVcsProvider } from './providers/vcs-git/index.js';
 import { GitWorktreeProvider } from './providers/workspace-git-worktree/index.js';
+import { GitWorktreeChangeSetProvider } from './providers/workspace-git-worktree/changes.js';
 import { PiAgentProvider } from './providers/agent-pi/index.js';
 import { GitHubScmProvider } from './providers/scm-github/index.js';
 import { HeuristicBuildPlannerProvider } from './providers/build-heuristic/index.js';
@@ -24,7 +25,7 @@ export function isolationProvider() {
 }
 
 function runtime() {
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider() });
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider() });
 }
 
 const program = new Command();
@@ -102,6 +103,15 @@ run.command('log <id>').description('Print captured agent output for a run').act
   const store = runtime().deps.runStore;
   if (!store) throw new Error('No run store configured');
   process.stdout.write(await store.readLog(id));
+});
+run.command('review <id>').description('Summarize the change set produced by a succeeded run').action(async id => {
+  const summary = await runtime().reviewRun(id);
+  console.log(`${summary.status} ${summary.runId} ${summary.files.length} file(s)`);
+  if (summary.summary) console.log(summary.summary);
+});
+run.command('accept <id>').description('Accept the change set from a succeeded run and mark its task done').option('-m, --message <message>', 'accept/commit message').action(async (id, opts) => {
+  const result = await runtime().acceptRun(id, opts.message);
+  console.log(`${result.status} ${result.runId}: ${result.message}`);
 });
 
 program.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
