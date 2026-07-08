@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { hasBuildPlanner, type BuildPlannerProvider, type BuildRequest, type BuildResult } from './build.js';
 import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type ChangeSetSummary } from './changes.js';
 import { hasTaskDiscovery, type TaskDiscoveryProvider } from './discovery.js';
+import { hasGate, type GateDecision, type GateDecisionKind, type GateProvider, type GateSubject, type PendingGateDecision } from './gate.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
 import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } from './lease.js';
@@ -13,11 +14,11 @@ import { hasSpec, type SpecProvider } from './spec.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
 import { hasWorkstream, hasWorkstreamPlanner, type WorkstreamItem, type WorkstreamPlan, type WorkstreamPlannerProvider, type WorkstreamProvider } from './workstream.js';
-import type { AgentProvider, ForgeConfig, ForgeProvider, ReleaseRecord, ReleaseStatus, ReleaseStore, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
+import type { AgentProvider, ForgeConfig, ForgeProvider, Json, ReleaseRecord, ReleaseStatus, ReleaseStore, RunRecord, RunStore, ScmProvider, Task, TaskStore, VcsProvider, WorkspaceProvider } from './types.js';
 import { writeJson } from '../util/fs.js';
 
 export class ForgeRuntime {
-  constructor(public deps: { store: TaskStore; runStore?: RunStore; releaseStore?: ReleaseStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; spec?: SpecProvider & ForgeProvider; notification?: NotificationProvider & ForgeProvider; root?: string }) {}
+  constructor(public deps: { store: TaskStore; runStore?: RunStore; releaseStore?: ReleaseStore; vcs: VcsProvider; workspace: WorkspaceProvider; agent: AgentProvider; isolation?: IsolationProvider; scm?: ScmProvider; buildPlanner?: BuildPlannerProvider & ForgeProvider; changeSet?: ChangeSetProvider; validation?: ValidationProvider & ForgeProvider; taskDiscovery?: TaskDiscoveryProvider & ForgeProvider; lease?: LeaseProvider; workstream?: WorkstreamProvider; workstreamPlanner?: WorkstreamPlannerProvider; spec?: SpecProvider & ForgeProvider; notification?: NotificationProvider & ForgeProvider; gate?: GateProvider; root?: string }) {}
   get root() { return this.deps.root ?? process.cwd(); }
 
   async init(projectName: string): Promise<ForgeConfig> {
@@ -26,13 +27,27 @@ export class ForgeRuntime {
     await this.deps.store.init();
     await this.deps.runStore?.init();
     await this.deps.releaseStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id, gate: this.deps.gate?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
   }
 
-  providers() { return [this.deps.store, this.deps.runStore, this.deps.releaseStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner, this.deps.spec, this.deps.notification].filter(Boolean); }
+  providers() { return [this.deps.store, this.deps.runStore, this.deps.releaseStore, this.deps.vcs, this.deps.workspace, this.deps.isolation, this.deps.agent, this.deps.scm, this.deps.buildPlanner, this.deps.changeSet, this.deps.validation, this.deps.taskDiscovery, this.deps.lease, this.deps.workstream, this.deps.workstreamPlanner, this.deps.spec, this.deps.notification, this.deps.gate].filter(Boolean); }
+
+  private gateProvider(): GateProvider {
+    const provider = this.providers().find(provider => hasGate(provider));
+    if (!provider || !hasGate(provider)) throw new Error('No gate provider configured');
+    return provider;
+  }
+
+  async publishGateDecision(input: { subject: GateSubject; message?: string; metadata?: Record<string, Json> }): Promise<PendingGateDecision> {
+    return this.gateProvider().publishDecision(input);
+  }
+
+  async readGateDecision(input: { gateId: string; kind?: GateDecisionKind; task?: Task; run?: RunRecord }): Promise<GateDecision | null> {
+    return this.gateProvider().readDecision(input);
+  }
 
   private releaseStore(): ReleaseStore {
     if (!this.deps.releaseStore) throw new Error('No release store configured');

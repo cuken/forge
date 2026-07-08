@@ -20,6 +20,7 @@ Defined in `src/core/types.ts`:
 - `WorkstreamProvider` — import and list provider-neutral roadmap/workstream backlog items before they are enqueued as Forge tasks
 - `WorkstreamPlannerProvider` — turn a natural-language goal into workstream items, optionally asking clarifying questions through a generic channel
 - `NotificationProvider` — receive provider-neutral run lifecycle notifications without coupling runtime orchestration to a delivery channel
+- `GateProvider` — publish pending human decisions to an external system of record and read provider-neutral decisions back
 
 ## Current optional capabilities
 
@@ -34,6 +35,7 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `WorkstreamPlannerProvider` — plans workstream items from a prompt for `forge workstream plan`, relaying clarifying questions through the caller-supplied `ask` channel
 - `NotificationProvider` — receives best-effort run lifecycle events such as started, workspace-created, environment-prepared, deferred, succeeded, and failed
 - `ReleaseVcsProvider` — prepares provider-neutral release records for human merge/release review without hardcoded branch behavior
+- `GateProvider` — bridges Forge approval gates to external systems without exposing tracker-specific concepts to core
 
 Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`. Provider-owned doctor checks should cover external/environmental prerequisites that the runtime cannot know about; for example, `change-set.git-worktree` verifies Git worktree metadata and `.git` pointer accessibility so `forge doctor` can flag container mounts that would make review/accept fail.
 
@@ -158,6 +160,17 @@ The built-in `scm.github` provider implements `ReleaseVcsProvider` with GitHub b
 
 The built-in `store.filesystem.releases` provider stores one JSON file per release in `.forge/releases/` and supports listing by status or target kind.
 
+## Human approval gates
+
+`GateProvider` lets Forge expose pending human decisions (currently spec approval and run acceptance) through an external system of record without coupling core to a tracker, chat app, or code host. The contract lives in `src/core/gate.ts` and has two methods:
+
+- `publishDecision({ subject, message, metadata })` creates or updates a pending external decision and returns a provider-neutral `PendingGateDecision` containing `providerId`, stable `gateId`, `kind`, `taskId`, optional `runId`, optional `url`, and a human-readable `message`.
+- `readDecision({ gateId, kind, task, run })` reads the external decision state and returns a `GateDecision` with status `pending`, `approved`, `rejected`, or `canceled`, or `null` when the external record is not found.
+
+Subjects are provider-neutral unions: `spec-approval` carries the Forge task plus spec path/body, and `run-acceptance` carries the Forge task plus run record and optional summary. Providers may map these subjects to issues, pull requests, forms, tickets, chat messages, or any other durable system, but core must only persist and act on the neutral ids, statuses, messages, URLs, and JSON metadata returned by the provider.
+
+Expected human outcomes should be returned as decision statuses rather than thrown errors. Throw only for unexpected backend failures. Provider-specific fields belong in `metadata`; do not add tracker-specific ids or workflow states to `Task`, `RunRecord`, or runtime orchestration.
+
 ## Run lifecycle notifications
 
 `NotificationProvider` lets providers send lifecycle updates about Forge runs without the core knowing about chat, email, webhooks, terminals, or any other concrete channel. The contract is `notifyRun({ event, task, run?, message })`, where `event` is one of `run.started`, `run.workspace-created`, `run.environment-prepared`, `run.deferred`, `run.succeeded`, or `run.failed`.
@@ -180,6 +193,7 @@ Future implementations can deliver the same neutral events through any channel o
 - `src/providers/planner-pi` implements `WorkstreamPlannerProvider` by interviewing through pi and emitting dependency-ordered workstream drafts.
 - `src/providers/spec-pi` implements `SpecProvider` by asking pi to draft Markdown specs for gated tasks.
 - `src/providers/notification-console` implements `NotificationProvider` by writing run lifecycle notifications to the configured console stream.
+- Future `GateProvider` implementations can publish spec approval and run acceptance decisions to trackers, chats, review tools, or other durable approval systems.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks` and release JSON under `.forge/releases`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task and provides `change-set.git-worktree` for reviewing changed files and accepting run branches back into the project checkout. New configs record this provider as `providers.changeSet`.

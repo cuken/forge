@@ -44,6 +44,7 @@ export interface ForgeConfig {
     workstreamPlanner?: string;
     spec?: string;
     notification?: string;
+    gate?: string;
   };
   pi?: { command: string; args: string[] };
   github?: { owner?: string; repo?: string; releaseBranchTemplate?: string; releaseBaseBranch?: string };
