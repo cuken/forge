@@ -17,6 +17,7 @@ import { readForgeConfigSync } from './core/config.js';
 import { ShellValidationProvider } from './providers/validation-shell/index.js';
 import { HeuristicTaskDiscoveryProvider } from './providers/discovery-heuristic/index.js';
 import { MemoryLeaseProvider } from './providers/lease-memory/index.js';
+import { FileLeaseProvider } from './providers/lease-filesystem/index.js';
 
 export function isolationProvider() {
   const configured = readForgeConfigSync()?.providers?.isolation;
@@ -36,8 +37,10 @@ function runtime() {
   const requestedDiscovery = config?.providers?.taskDiscovery;
   if (requestedDiscovery && requestedDiscovery !== 'heuristic' && requestedDiscovery !== 'task-discovery.heuristic') throw new Error(`Unknown task discovery provider '${requestedDiscovery}'. Expected heuristic or task-discovery.heuristic.`);
   const requestedLease = config?.providers?.lease;
-  if (requestedLease && requestedLease !== 'memory' && requestedLease !== 'lease.memory') throw new Error(`Unknown lease provider '${requestedLease}'. Expected memory or lease.memory.`);
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease: new MemoryLeaseProvider() });
+  if (requestedLease && !['memory', 'lease.memory', 'filesystem', 'lease.filesystem'].includes(requestedLease)) throw new Error(`Unknown lease provider '${requestedLease}'. Expected memory, filesystem, lease.memory, or lease.filesystem.`);
+  const staleAfterMs = process.env.FORGE_LEASE_STALE_AFTER_MS ? Number(process.env.FORGE_LEASE_STALE_AFTER_MS) : undefined;
+  const lease = requestedLease === 'filesystem' || requestedLease === 'lease.filesystem' ? new FileLeaseProvider(process.cwd(), staleAfterMs) : new MemoryLeaseProvider();
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease });
 }
 
 const program = new Command();
@@ -83,6 +86,17 @@ program.command('sync').description('Run provider-declared sync tasks').option('
     if (r.status === 'blocked' || r.status === 'failed') failed = true;
   }
   if (failed) process.exitCode = 1;
+});
+
+const lease = program.command('lease').description('Inspect and clean provider-neutral resource leases');
+lease.command('status').description('List active resource leases after stale cleanup').action(async () => {
+  const entries = await runtime().leaseStatus();
+  if (!entries.length) console.log('no active leases');
+  for (const entry of entries) console.log(`${entry.id}\t${entry.taskId}\t${entry.scope.kind}:${entry.scope.value}\tacquired=${entry.acquiredAt}${entry.staleAt ? `\tstaleAt=${entry.staleAt}` : ''}`);
+});
+lease.command('cleanup').description('Remove stale resource leases').action(async () => {
+  const removed = await runtime().cleanupLeases();
+  console.log(`removed ${removed} stale lease(s)`);
 });
 
 program.command('build <request...>').alias('b').description('Plan a natural-language build task and run the Forge flow').option('--name <name>', 'hard-define task title').option('--pattern <pattern>', 'provider-specific task matching pattern').option('--auto-approve', 'approve generated specs without stopping').option('--no-run', 'create/plan task without running implementation').action(async (request: string[], opts) => {

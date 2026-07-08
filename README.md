@@ -20,6 +20,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - spec gate for medium/large tasks
 - provider-neutral validation gates before accepting completed runs
 - optional parallel dispatch for multiple ready tasks
+- filesystem resource-scope lease provider with stale cleanup for coordinating parallel Forge processes
 
 ## Self-augmentation docs
 
@@ -64,6 +65,8 @@ FORGE_ISOLATION=podman FORGE_PODMAN_IMAGE=your-agent-image forge run toml
 # [providers]
 # isolation = "podman"
 forge sync --dry-run
+forge lease status
+forge lease cleanup
 forge build update forge so that it honors toml files in the config instead of json config files
 forge task create "Add feature" --complexity small
 forge task create "Risky feature" --complexity medium

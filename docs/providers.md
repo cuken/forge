@@ -90,13 +90,19 @@ Initial implementation: `task-discovery.heuristic`, which recognizes explicit fi
 
 `LeaseProvider` lets Forge coordinate potentially-conflicting ready tasks without coupling the runtime to a specific queue, lock service, code host, or database. When a task has discovery `resourceScopes`, `ForgeRuntime.runReady()` acquires a lease before creating the workspace and releases it in a `finally` hook after the agent run completes or fails.
 
-Initial implementation: `lease.memory`, an in-process provider for local runs. It rejects overlapping scope keys such as `path:src/core/forge.ts` while the scope is already held. Future implementations can back the same interface with files, Redis, SCM checks, or remote schedulers.
+Built-in implementations:
+
+- `lease.memory` is an in-process provider for local runs. It rejects overlapping scope keys such as `path:src/core/forge.ts` while the scope is already held.
+- `lease.filesystem` persists one lock file per scope under `.forge/leases`, uses atomic file creation so separate Forge processes cannot acquire the same scope concurrently, removes stale lock files before acquisition/status, and reports active locks to `forge lease status`. Configure stale cleanup with `FORGE_LEASE_STALE_AFTER_MS` (default: one hour).
+
+Future implementations can back the same interface with Redis, SCM checks, or remote schedulers.
 
 ## Current implementations
 
 - `src/providers/build-heuristic` estimates request complexity and drafts specs for complex tasks.
 - `src/providers/discovery-heuristic` attaches heuristic task discovery metadata and resource scopes to newly-created tasks.
 - `src/providers/lease-memory` implements `LeaseProvider` with in-memory scope locks for the current Forge process.
+- `src/providers/lease-filesystem` implements cross-process `LeaseProvider` locks in `.forge/leases` with stale lease cleanup and status reporting.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.
 - `src/providers/workspace-git-worktree` creates one Git worktree per task and provides `change-set.git-worktree` for reviewing changed files and accepting run branches back into the project checkout. New configs record this provider as `providers.changeSet`.

@@ -53,6 +53,23 @@ export class ForgeRuntime {
     return runSyncTasks(tasks, input);
   }
 
+  private leaseProvider(): LeaseProvider | undefined {
+    const provider = this.providers().find(provider => hasLease(provider));
+    return provider && hasLease(provider) ? provider : undefined;
+  }
+
+  async leaseStatus() {
+    const provider = this.leaseProvider();
+    if (!provider?.status) return [];
+    return provider.status();
+  }
+
+  async cleanupLeases() {
+    const provider = this.leaseProvider();
+    if (!provider?.cleanupStale) return 0;
+    return provider.cleanupStale();
+  }
+
   async build(input: BuildRequest, observer?: (event: string) => void): Promise<BuildResult> {
     const planner = this.providers().find(provider => hasBuildPlanner(provider));
     if (!planner || !hasBuildPlanner(planner)) throw new Error('No build planner provider configured');
@@ -165,7 +182,7 @@ export class ForgeRuntime {
     const concurrency = Number.isFinite(requestedConcurrency) && requestedConcurrency > 0 ? requestedConcurrency : 1;
     const results: Array<{ task: string; run?: string; workspace?: { id: string; path: string; branch: string }; environment?: ExecutionEnvironment; result?: { exitCode: number; output: string }; error?: string }> = [];
     let next = 0;
-    const leaseProvider = this.providers().find(provider => hasLease(provider));
+    const leaseProvider = this.leaseProvider();
     const runOne = async (task: Task) => {
       observer?.(`starting task ${task.id}: ${task.title}\n`);
       const run = await this.deps.runStore?.start({ task, agentId: this.deps.agent.id });
@@ -217,8 +234,8 @@ export class ForgeRuntime {
       } finally {
         if (lease) {
           try {
-            const leaseProvider = this.providers().find(provider => hasLease(provider));
-            if (leaseProvider && hasLease(leaseProvider)) {
+            const leaseProvider = this.leaseProvider();
+            if (leaseProvider) {
               await leaseProvider.release(lease);
               await emit(`lease ${lease.id} released\n`);
             }

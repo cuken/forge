@@ -65,6 +65,14 @@ Current Git sync tasks:
 
 Sync task execution stops on `blocked` or `failed` results.
 
+## `forge lease status`
+
+Lists active provider-neutral resource leases after asking the configured lease provider to clean stale entries. The filesystem provider (`[providers] lease = "filesystem"`) stores leases in `.forge/leases` so multiple Forge processes coordinate the same discovered resource scopes.
+
+## `forge lease cleanup`
+
+Removes stale leases through the configured lease provider and prints the number removed. For `lease.filesystem`, stale age defaults to one hour and can be changed with `FORGE_LEASE_STALE_AFTER_MS`.
+
 ## `forge build <request...>`
 
 Alias: `forge b`.
@@ -152,7 +160,7 @@ Parallel execution still goes through the provider contracts for each task: when
 For each ready task:
 
 1. Mark task `running`.
-2. Ask `LeaseProvider` to acquire discovered resource scopes when configured and scopes are present. The built-in provider is `lease.memory` and can be selected in `.forge/config.toml` with `[providers] lease = "memory"`.
+2. Ask `LeaseProvider` to acquire discovered resource scopes when configured and scopes are present. Built-in providers are `lease.memory` for one process and `lease.filesystem`/`filesystem` for cross-process coordination via `.forge/leases`; select one in `.forge/config.toml` with `[providers] lease = "filesystem"`.
 3. Ask `WorkspaceProvider` to create a workspace.
 4. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml` `[providers] isolation = "host"|"docker"|"podman"`. The host provider returns the worktree directly; container providers own setup hooks, readiness checks, command delivery, and cleanup details. The Podman provider can run agent commands through `podman exec` once its retrying readiness command passes.
 5. Ask `AgentProvider` to run with task/workspace/environment context.

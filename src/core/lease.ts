@@ -9,10 +9,22 @@ export interface LeaseHandle {
   acquiredAt: string;
 }
 
+export interface LeaseStatusEntry {
+  providerId: string;
+  id: string;
+  taskId: string;
+  scope: TaskResourceScope;
+  acquiredAt: string;
+  heartbeatAt?: string;
+  staleAt?: string;
+}
+
 export interface LeaseProvider extends ForgeProvider {
   kind: 'lease';
   acquire(input: { task: Task; scopes: TaskResourceScope[] }): Promise<LeaseHandle>;
   release(lease: LeaseHandle): Promise<void>;
+  status?(): Promise<LeaseStatusEntry[]>;
+  cleanupStale?(): Promise<number>;
 }
 
 export function hasLease(value: unknown): value is LeaseProvider {

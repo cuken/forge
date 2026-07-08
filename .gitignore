@@ -5,6 +5,7 @@ dist/
 .forge/specs/
 .forge/runs/
 .forge/logs/
+.forge/leases/
 ../.forge-worktrees/
 .env
 .DS_Store
