@@ -1,4 +1,4 @@
-import type { RunRecord, Task } from './types.js';
+import type { Json, RunRecord, Task } from './types.js';
 
 export type RunNotificationEvent =
   | 'run.started'
@@ -13,6 +13,7 @@ export interface RunNotificationInput {
   task: Task;
   run?: RunRecord;
   message: string;
+  metadata?: { [key: string]: Json };
 }
 
 export interface NotificationProvider {
