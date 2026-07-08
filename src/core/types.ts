@@ -53,6 +53,7 @@ export interface ForgeConfig {
   linear?: { teamKey?: string; project?: string };
   validation?: { commands: string[] };
   notifications?: { channel?: string };
+  daemon?: { syncAcceptedWork?: boolean };
 }
 
 export interface TaskStore extends ForgeProvider {

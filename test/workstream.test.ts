@@ -11,8 +11,10 @@ import type { WorkstreamCompletionProvider, WorkstreamCompletionUpdate, Workstre
 import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { SpecProvider } from '../src/core/spec.js';
 import type { AgentProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
+import type { SyncProvider, SyncResult } from '../src/core/sync.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; async isRepo(){return true;} async init(){} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
+class SyncingVcs extends MemoryVcs implements SyncProvider { results: SyncResult[] = []; messages: Array<string | undefined> = []; constructor(private next: SyncResult[] = [{ id: 'vcs.memory:sync', status: 'changed', message: 'synced' }]) { super(); } syncTasks(){ return this.next.map(result => ({ id: result.id, label: result.id, run: async (input: { message?: string }) => { this.messages.push(input.message); this.results.push(result); return result; } })); } }
 class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; async create(input:{task:Task}){ return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; async run(){ return { exitCode: 0, output: 'ok' }; } }
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; constructor(private refs: { commit?: { sha: string; branch: string }; sync?: { id: string; url: string; status: string } } = {}) {} async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt', commit: this.refs.commit ? { providerId: this.id, sha: this.refs.commit.sha, id: this.refs.commit.sha, branch: this.refs.commit.branch } : undefined, sync: this.refs.sync ? { providerId: this.id, ...this.refs.sync } : undefined }; } }
@@ -203,6 +205,35 @@ describe('workstream backlog', () => {
       ['Medium yolo item', 'done'],
     ]));
     expect(result.status).toEqual([]);
+  });
+
+  it('runs configured sync tasks after accepted yolo work when requested', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-workstream-test-'));
+    const vcs = new SyncingVcs();
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs, workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), spec: new MemorySpec(), workstream: new FileWorkstreamProvider(root) });
+    await importItems(rt, root, [{ id: 'sync-after-accept', title: 'Sync after accept', complexity: 'small' }]);
+
+    const result = await rt.sweepWorkstream(undefined, { concurrency: 1, yolo: true, sync: true });
+
+    expect(result.yolo.accepted).toHaveLength(1);
+    expect(result.sync).toEqual([{ id: 'vcs.memory:sync', status: 'changed', message: 'synced' }]);
+    expect(vcs.messages).toEqual(['forge process accepted 1 run(s)']);
+    await expect(rt.deps.store.list()).resolves.toEqual([expect.objectContaining({ status: 'done' })]);
+  });
+
+  it('surfaces daemon sync failures without rolling back accepted local state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-workstream-test-'));
+    const vcs = new SyncingVcs([{ id: 'vcs.memory:push', status: 'failed', message: 'push failed', detail: 'remote rejected' }]);
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs, workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), spec: new MemorySpec(), workstream: new FileWorkstreamProvider(root) });
+    await importItems(rt, root, [{ id: 'sync-fails', title: 'Sync fails', complexity: 'small' }]);
+
+    const result = await rt.sweepWorkstream(undefined, { concurrency: 1, yolo: true, sync: true });
+
+    expect(result.yolo.accepted).toHaveLength(1);
+    expect(result.sync).toEqual([{ id: 'vcs.memory:push', status: 'failed', message: 'push failed', detail: 'remote rejected' }]);
+    expect(result.yolo.errors).toEqual(['sync vcs.memory:push: push failed (remote rejected)']);
+    await expect(rt.deps.store.list()).resolves.toEqual([expect.objectContaining({ status: 'done' })]);
+    await expect(rt.deps.runStore?.list()).resolves.toEqual([expect.objectContaining({ acceptance: expect.objectContaining({ status: 'accepted' }) })]);
   });
 
   it('continues running local ready tasks when the workstream provider is unavailable', async () => {

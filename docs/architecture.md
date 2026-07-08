@@ -55,7 +55,7 @@ await git.push('upstream', 'main');
 
 - `forge init` initializes `.forge/` and Git.
 - `forge doctor` runs provider-declared environment checks.
-- `forge sync` runs provider-declared synchronization tasks and emits a provider-neutral `sync.completed` lifecycle hook with the sync input and results. Lifecycle hooks are best-effort observation points; providers should use them for audit/automation reactions that must not control core state transitions.
+- `forge sync` runs provider-declared synchronization tasks and emits a provider-neutral `sync.completed` lifecycle hook with the sync input and results. `forge process --sync` (or `[daemon] syncAcceptedWork = true`) reuses the same provider-neutral sync tasks after YOLO sweeps that accepted work, after local acceptance state is already persisted. Lifecycle hooks are best-effort observation points; providers should use them for audit/automation reactions that must not control core state transitions.
 - `forge build <request>` turns natural language into the opinionated task/spec/run flow through a build planner provider.
 - `forge task create` creates local tasks and optionally GitHub issues.
 - `forge task spec` writes a spec file and moves a task to approval.

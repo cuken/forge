@@ -85,6 +85,7 @@ FORGE_ISOLATION=podman FORGE_PODMAN_IMAGE=your-agent-image forge run toml
 # [providers]
 # isolation = "podman"
 forge sync --dry-run
+forge process --yolo --sync --parallel 3
 forge lease status
 forge lease cleanup
 forge workstream plan build a plugin system with docs and a sample plugin

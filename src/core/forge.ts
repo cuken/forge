@@ -28,7 +28,7 @@ export class ForgeRuntime {
     await this.deps.store.init();
     await this.deps.runStore?.init();
     await this.deps.releaseStore?.init();
-    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamCompletion: this.deps.workstreamCompletion?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id, lifecycle: this.deps.lifecycle?.id, gate: this.deps.gate?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' } };
+    const config: ForgeConfig = { version: 1, project: { name: projectName }, providers: { store: this.deps.store.id, releaseStore: this.deps.releaseStore?.id, vcs: this.deps.vcs.id, workspace: this.deps.workspace.id, isolation: this.deps.isolation?.id, agent: this.deps.agent.id, scm: this.deps.scm?.id, buildPlanner: this.deps.buildPlanner?.id, changeSet: this.deps.changeSet?.id, validation: this.deps.validation?.id, taskDiscovery: this.deps.taskDiscovery?.id, lease: this.deps.lease?.id, workstream: this.deps.workstream?.id, workstreamCompletion: this.deps.workstreamCompletion?.id, workstreamPlanner: this.deps.workstreamPlanner?.id, spec: this.deps.spec?.id, notification: this.deps.notification?.id, lifecycle: this.deps.lifecycle?.id, gate: this.deps.gate?.id }, pi: { command: 'pi', args: ['-p'] }, validation: { commands: [] }, notifications: { channel: 'stderr' }, daemon: { syncAcceptedWork: false } };
     await writeJson(join(this.root, '.forge', 'config.json'), config);
     await writeFile(join(this.root, '.forge', 'context', 'project-summary.md'), `# ${projectName}\n\nForge project context. Update this as the project evolves.\n`);
     return config;
@@ -160,13 +160,21 @@ export class ForgeRuntime {
   }
 
   async sync(input: SyncInput = {}): Promise<SyncResult[]> {
+    const results = await this.runConfiguredSync(input);
+    await this.lifecycleHook('sync.completed', { sync: { input, results } });
+    return results;
+  }
+
+  private async runConfiguredSync(input: SyncInput = {}): Promise<SyncResult[]> {
     const tasks = this.providers().flatMap(provider => hasSync(provider) ? provider.syncTasks() : []);
     if (this.providers().some(provider => hasGate(provider))) {
       tasks.unshift({ id: 'gate.decisions', label: 'external gate decisions', run: syncInput => this.applyGateDecisions(syncInput) });
     }
-    const results = await runSyncTasks(tasks, input);
-    await this.lifecycleHook('sync.completed', { sync: { input, results } });
-    return results;
+    return runSyncTasks(tasks, input);
+  }
+
+  private failedSyncResults(results: SyncResult[]) {
+    return results.filter(result => result.status === 'blocked' || result.status === 'failed');
   }
 
   private async applyGateDecisions(input: SyncInput = {}): Promise<SyncResult> {
@@ -420,7 +428,7 @@ export class ForgeRuntime {
     return lines;
   }
 
-  async sweepWorkstream(observer?: (event: string) => void, options: { concurrency?: number; yolo?: boolean } = {}) {
+  async sweepWorkstream(observer?: (event: string) => void, options: { concurrency?: number; yolo?: boolean; sync?: boolean; syncMessage?: string } = {}) {
     const sweepErrors: string[] = [];
     let enqueued: Task[] = [];
     try {
@@ -433,8 +441,16 @@ export class ForgeRuntime {
     const beforeRun = options.yolo ? await this.bypassHumanGates(observer) : { specced: [], approved: [], accepted: [], errors: [] };
     const runResults = await this.runReady(undefined, observer, { concurrency: options.concurrency });
     const afterRun = options.yolo ? await this.bypassHumanGates(observer) : { specced: [], approved: [], accepted: [], errors: [] };
+    const yolo = { specced: [...beforeRun.specced, ...afterRun.specced], approved: [...beforeRun.approved, ...afterRun.approved], accepted: [...beforeRun.accepted, ...afterRun.accepted], errors: [...beforeRun.errors, ...afterRun.errors] };
+    let sync: SyncResult[] = [];
+    if (options.sync && yolo.accepted.some(result => result.status === 'accepted' || result.status === 'empty')) {
+      const syncInput = { message: options.syncMessage ?? `forge process accepted ${yolo.accepted.length} run(s)` };
+      sync = await this.runConfiguredSync(syncInput);
+      await this.lifecycleHook('sync.completed', { sync: { input: syncInput, results: sync } });
+      for (const failure of this.failedSyncResults(sync)) yolo.errors.push(`sync ${failure.id}: ${failure.message}${failure.detail ? ` (${failure.detail})` : ''}`);
+    }
     const status = await this.status();
-    return { enqueued, runResults, status, errors: sweepErrors, yolo: { specced: [...beforeRun.specced, ...afterRun.specced], approved: [...beforeRun.approved, ...afterRun.approved], accepted: [...beforeRun.accepted, ...afterRun.accepted], errors: [...beforeRun.errors, ...afterRun.errors] } };
+    return { enqueued, runResults, status, errors: sweepErrors, sync, yolo };
   }
 
   async bypassHumanGates(observer?: (event: string) => void) {

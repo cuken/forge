@@ -197,8 +197,10 @@ lease.command('cleanup').description('Remove stale resource leases').action(asyn
   console.log(`removed ${removed} stale lease(s)`);
 });
 
-program.command('process').description('Continuously sweep the workstream: enqueue unblocked items, run ready tasks, then print pending human actions').option('--once', 'run a single sweep and exit').option('--interval <seconds>', 'seconds between sweeps', v => Number(v), 60).option('-p, --parallel <count>', 'maximum ready tasks to run concurrently during each sweep', v => Number(v), 2).option('--yolo', 'bypass human spec approval and run acceptance gates').action(async opts => {
+program.command('process').description('Continuously sweep the workstream: enqueue unblocked items, run ready tasks, then print pending human actions').option('--once', 'run a single sweep and exit').option('--interval <seconds>', 'seconds between sweeps', v => Number(v), 60).option('-p, --parallel <count>', 'maximum ready tasks to run concurrently during each sweep', v => Number(v), 2).option('--yolo', 'bypass human spec approval and run acceptance gates').option('--sync', 'run configured SyncProvider tasks after successful accepted YOLO work').action(async opts => {
   const rt = runtime();
+  const daemonConfig = readForgeConfigSync()?.daemon;
+  const syncAcceptedWork = Boolean(opts.sync || daemonConfig?.syncAcceptedWork);
   let stopping = false;
   let wakeSleep: (() => void) | undefined;
   const stop = () => { stopping = true; wakeSleep?.(); };
@@ -209,11 +211,12 @@ program.command('process').description('Continuously sweep the workstream: enque
   }).finally(() => { wakeSleep = undefined; });
   try {
     do {
-      logProcess('sweep', `starting sweep (parallel=${opts.parallel}${opts.yolo ? ', yolo=on' : ''})`, '🔄');
-      const result = await rt.sweepWorkstream(processObserver(), { concurrency: opts.parallel, yolo: opts.yolo });
+      logProcess('sweep', `starting sweep (parallel=${opts.parallel}${opts.yolo ? ', yolo=on' : ''}${syncAcceptedWork ? ', sync=on' : ''})`, '🔄');
+      const result = await rt.sweepWorkstream(processObserver(), { concurrency: opts.parallel, yolo: opts.yolo, sync: syncAcceptedWork });
       logProcess('sweep', `enqueued ${result.enqueued.length}, ran ${result.runResults.length}`, result.errors.length ? '⚠️' : '✅');
       for (const error of result.errors) logProcess('sweep-error', error, '❌');
       if (opts.yolo) logProcess('wdo', `specced ${result.yolo.specced.length}, approved ${result.yolo.approved.length}, accepted ${result.yolo.accepted.length}, errors ${result.yolo.errors.length}`, result.yolo.errors.length ? '⚠️' : '⚡');
+      if (result.sync.length) for (const sync of result.sync) logProcess('sync', `${sync.id}: ${sync.message}`, sync.status === 'changed' ? '↻' : sync.status === 'unchanged' ? '✓' : '❌');
       for (const error of result.yolo.errors) logProcess('wdo-error', error, '❌');
       if (!result.status.length) logProcess('status', 'no pending human actions', '✨');
       for (const line of result.status) logProcess('status', line, '📌');
