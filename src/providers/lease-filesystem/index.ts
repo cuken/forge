@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { leaseScopeKey, type LeaseHandle, type LeaseProvider, type LeaseStatusEntry } from '../../core/lease.js';
+import { LeaseConflictError, leaseScopeKey, type LeaseHandle, type LeaseProvider, type LeaseStatusEntry } from '../../core/lease.js';
 import type { TaskResourceScope } from '../../core/discovery.js';
 import type { Task } from '../../core/types.js';
 
@@ -30,21 +30,28 @@ export class FileLeaseProvider implements LeaseProvider {
     await this.cleanupStale();
     const id = `lease-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const acquiredAt = new Date().toISOString();
+    // Acquire in sorted key order so processes contending on overlapping scope sets
+    // always collide on the first shared scope instead of deadlocking on partial holds.
+    const scopes = [...input.scopes].sort((a, b) => leaseScopeKey(a).localeCompare(leaseScopeKey(b)));
     const written: string[] = [];
     try {
-      for (const scope of input.scopes) {
+      for (const scope of scopes) {
         const path = this.pathFor(scope);
         const body: LeaseFile = { providerId: this.id, leaseId: id, taskId: input.task.id, scope, acquiredAt, heartbeatAt: acquiredAt, staleAfterMs: this.staleAfterMs, pid: process.pid };
-        await writeFile(path, `${JSON.stringify(body, null, 2)}\n`, { flag: 'wx' });
+        try {
+          await writeFile(path, `${JSON.stringify(body, null, 2)}\n`, { flag: 'wx' });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+          const holder = await this.readLeaseFile(path);
+          throw new LeaseConflictError(`resource scope '${leaseScopeKey(scope)}' is already leased${holder ? ` by task ${holder.taskId}` : ''}`, leaseScopeKey(scope), holder?.taskId);
+        }
         written.push(path);
       }
     } catch (error) {
       await Promise.all(written.map(path => rm(path, { force: true })));
-      const existing = await this.readExisting(input.scopes);
-      const owner = existing[0] ? ` by task ${existing[0].taskId}` : '';
-      throw new Error(`resource scope lease unavailable${owner}: ${String(error)}`);
+      throw error;
     }
-    return { providerId: this.id, id, taskId: input.task.id, scopes: input.scopes, acquiredAt };
+    return { providerId: this.id, id, taskId: input.task.id, scopes, acquiredAt };
   }
 
   async release(lease: LeaseHandle): Promise<void> {
@@ -84,7 +91,6 @@ export class FileLeaseProvider implements LeaseProvider {
     return entries.sort((a, b) => leaseScopeKey(a.scope).localeCompare(leaseScopeKey(b.scope)));
   }
 
-  private async readExisting(scopes: TaskResourceScope[]) { return (await Promise.all(scopes.map(scope => this.readLeaseFile(this.pathFor(scope))))).filter((x): x is LeaseFile => Boolean(x)); }
   private async readLeaseFile(path: string): Promise<LeaseFile | null> {
     try { return JSON.parse(await readFile(path, 'utf8')) as LeaseFile; }
     catch { return null; }

@@ -117,7 +117,7 @@ task.command('list').action(async () => { for (const t of await runtime().deps.s
 task.command('spec <id> <body>').action(async (id, body) => { const t = await runtime().writeSpec(id, body); console.log(`${t.id} ${t.status} ${t.spec?.path}`); });
 task.command('approve [pattern]').description('Approve one awaiting task, optionally by id/title pattern').action(async pattern => { const t = await runtime().approve(pattern); console.log(`${t.id} ${t.status}`); });
 task.command('run [pattern]').description('Run one ready task, optionally by id/title pattern').action(async pattern => { console.log(JSON.stringify(await runtime().runTask(pattern, chunk => process.stdout.write(chunk)), null, 2)); });
-task.command('run-ready').option('-p, --parallel <count>', 'maximum ready tasks to run concurrently', v => Number(v), 1).action(async opts => { console.log(JSON.stringify(await runtime().runReady(undefined, chunk => process.stdout.write(chunk), { concurrency: opts.parallel }), null, 2)); });
+task.command('run-ready').option('-p, --parallel <count>', 'maximum ready tasks to run concurrently', v => Number(v), 1).option('--lease-wait <seconds>', 'maximum seconds to wait for resource scope leases before deferring a task', v => Number(v)).action(async opts => { console.log(JSON.stringify(await runtime().runReady(undefined, chunk => process.stdout.write(chunk), { concurrency: opts.parallel, leaseWaitMs: Number.isFinite(opts.leaseWait) ? opts.leaseWait * 1000 : undefined }), null, 2)); });
 
 const run = program.command('run-history').alias('runs').description('Inspect durable task run records');
 run.command('list').option('--task <id>', 'filter by task id').action(async opts => {

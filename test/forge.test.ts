@@ -9,7 +9,8 @@ import { FileRunStore } from '../src/providers/store-filesystem/runs.js';
 import type { ChangeSetProvider } from '../src/core/changes.js';
 import type { TaskDiscoveryProvider } from '../src/core/discovery.js';
 import type { ValidationProvider } from '../src/core/validation.js';
-import type { LeaseHandle, LeaseProvider } from '../src/core/lease.js';
+import { LeaseConflictError, type LeaseHandle, type LeaseProvider } from '../src/core/lease.js';
+import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
 import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; repo=false; async isRepo(){return this.repo;} async init(){this.repo=true;} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
@@ -34,6 +35,16 @@ async function makeRuntimeWithDiscovery() {
   const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), taskDiscovery: new MemoryDiscovery(), lease });
   return { rt, lease };
 }
+
+async function makeRuntimeWithLease(lease: LeaseProvider) {
+  const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+  const agent = new MemoryAgent();
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent, changeSet: new MemoryChangeSet(), lease });
+  return { rt, agent };
+}
+
+const sharedScope = { kind: 'path' as const, value: 'src/shared.ts', confidence: 'high' as const, reason: 'test scope' };
+const sharedDiscovery = { providerId: 'task-discovery.test', discoveredAt: '2026-01-01T00:00:00.000Z', resourceScopes: [sharedScope] };
 
 describe('Forge vertical slice', () => {
   it('initializes config, store, and project context', async () => {
@@ -112,6 +123,68 @@ describe('Forge vertical slice', () => {
     await expect(rt.deps.store.get(first.id)).resolves.toMatchObject({ status: 'reviewing' });
     await expect(rt.deps.store.get(second.id)).resolves.toMatchObject({ status: 'reviewing' });
     await expect(rt.deps.store.get(third.id)).resolves.toMatchObject({ status: 'reviewing' });
+  });
+
+  it('serializes ready tasks with overlapping resource scopes and releases leases after failures', async () => {
+    const { rt, agent } = await makeRuntimeWithLease(new MemoryLeaseProvider());
+    await rt.init('demo');
+    let activeShared = 0;
+    let maxActiveShared = 0;
+    agent.run = async input => {
+      activeShared++;
+      maxActiveShared = Math.max(maxActiveShared, activeShared);
+      await new Promise(resolve => setTimeout(resolve, 25));
+      activeShared--;
+      agent.runs.push(input.task.id);
+      return { exitCode: input.task.title.includes('failing') ? 1 : 0, output: `done ${input.task.id}` };
+    };
+    const failing = await rt.createTask('failing shared task');
+    const second = await rt.createTask('second shared task');
+    await rt.deps.store.update(failing.id, { discovery: sharedDiscovery });
+    await rt.deps.store.update(second.id, { discovery: sharedDiscovery });
+
+    const results = await rt.runReady(undefined, undefined, { concurrency: 2 });
+
+    expect(new Set(results.map(result => result.task))).toEqual(new Set([failing.id, second.id]));
+    expect(maxActiveShared).toBe(1);
+    await expect(rt.deps.store.get(failing.id)).resolves.toMatchObject({ status: 'failed' });
+    await expect(rt.deps.store.get(second.id)).resolves.toMatchObject({ status: 'reviewing' });
+  });
+
+  it('defers a task back to ready when its lease wait times out', async () => {
+    const lease = new MemoryLeaseProvider();
+    const { rt, agent } = await makeRuntimeWithLease(lease);
+    await rt.init('demo');
+    const blocker = await rt.createTask('external blocker task');
+    await lease.acquire({ task: { ...blocker, discovery: sharedDiscovery }, scopes: [sharedScope] });
+    const task = await rt.createTask('blocked task');
+    await rt.deps.store.update(task.id, { discovery: sharedDiscovery, status: 'ready' });
+
+    const results = await rt.runReady(task.id, undefined, { leaseWaitMs: 30 });
+
+    expect(results[0]).toMatchObject({ task: task.id, deferred: true });
+    expect(agent.runs).toEqual([]);
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'ready' });
+    await expect(rt.deps.runStore!.get(results[0].run!)).resolves.toMatchObject({ status: 'deferred' });
+  });
+
+  it('fails a task immediately when the lease provider errors for a non-conflict reason', async () => {
+    class BrokenLease implements LeaseProvider {
+      id = 'lease.broken'; kind = 'lease' as const;
+      async acquire(): Promise<LeaseHandle> { throw new Error('lease backend unreachable'); }
+      async release() {}
+    }
+    const { rt, agent } = await makeRuntimeWithLease(new BrokenLease());
+    await rt.init('demo');
+    const task = await rt.createTask('lease backend task');
+    await rt.deps.store.update(task.id, { discovery: sharedDiscovery });
+
+    const results = await rt.runReady(task.id, undefined, { leaseWaitMs: 5000 });
+
+    expect(results[0].error).toContain('lease backend unreachable');
+    expect(results[0].deferred).toBeUndefined();
+    expect(agent.runs).toEqual([]);
+    await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'failed' });
   });
 
   it('persists run records and captured logs', async () => {

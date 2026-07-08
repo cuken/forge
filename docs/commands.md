@@ -153,14 +153,14 @@ Runs one ready task by ID or unique title fragment.
 
 ## `forge task run-ready`
 
-Runs all ready tasks. By default Forge runs one task at a time. Use `--parallel <count>` (or `-p <count>`) to let Forge dispatch multiple ready tasks concurrently.
+Runs all ready tasks. By default Forge runs one task at a time. Use `--parallel <count>` (or `-p <count>`) to let Forge dispatch multiple ready tasks concurrently. Use `--lease-wait <seconds>` to bound how long a task waits for busy resource scope leases before it is deferred (default: 15 minutes).
 
 Parallel execution still goes through the provider contracts for each task: when discovered resource scopes are present, the runtime asks the lease provider to acquire those scopes, then asks the workspace provider for an isolated workspace, the isolation provider for an execution environment, the agent provider to run in that environment, and the run store to persist task-specific logs/metadata. Providers remain responsible for their own external-system behavior; Forge only controls how many ready task pipelines are in flight.
 
 For each ready task:
 
 1. Mark task `running`.
-2. Ask `LeaseProvider` to acquire discovered resource scopes when configured and scopes are present. Built-in providers are `lease.memory` for one process and `lease.filesystem`/`filesystem` for cross-process coordination via `.forge/leases`; select one in `.forge/config.toml` with `[providers] lease = "filesystem"`.
+2. Ask `LeaseProvider` to acquire discovered resource scopes when configured and scopes are present. Built-in providers are `lease.memory` for one process and `lease.filesystem`/`filesystem` for cross-process coordination via `.forge/leases`; select one in `.forge/config.toml` with `[providers] lease = "filesystem"`. When a scope is held elsewhere, the runtime waits with exponential backoff (250ms up to 5s between attempts) and logs progress at most every 10 seconds. If the wait exceeds `--lease-wait`, the task is deferred: it returns to `ready`, its run record is marked `deferred`, and the run-ready result includes `"deferred": true`. Any lease error that is not a scope conflict fails the task immediately instead of retrying.
 3. Ask `WorkspaceProvider` to create a workspace.
 4. Ask `IsolationProvider` to prepare the execution environment when configured. Select the built-in provider with `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml` `[providers] isolation = "host"|"docker"|"podman"`. The host provider returns the worktree directly; container providers own setup hooks, readiness checks, command delivery, and cleanup details. The Podman provider can run agent commands through `podman exec` once its retrying readiness command passes.
 5. Ask `AgentProvider` to run with task/workspace/environment context.

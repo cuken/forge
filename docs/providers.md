@@ -90,10 +90,15 @@ Initial implementation: `task-discovery.heuristic`, which recognizes explicit fi
 
 `LeaseProvider` lets Forge coordinate potentially-conflicting ready tasks without coupling the runtime to a specific queue, lock service, code host, or database. When a task has discovery `resourceScopes`, `ForgeRuntime.runReady()` acquires a lease before creating the workspace and releases it in a `finally` hook after the agent run completes or fails.
 
+Contract details:
+
+- Providers must throw `LeaseConflictError` (from `src/core/lease.ts`) when a scope is held elsewhere. The runtime treats conflicts as expected contention and retries with backoff until the lease-wait deadline, then defers the task. Any other acquire error is treated as a provider failure and fails the task immediately, so do not wrap I/O or backend errors in `LeaseConflictError`.
+- Scope keys come from `leaseScopeKey()`, which normalizes values (trims whitespace, strips trailing slashes) so `docs` and `docs/` contend for the same lease.
+
 Built-in implementations:
 
 - `lease.memory` is an in-process provider for local runs. It rejects overlapping scope keys such as `path:src/core/forge.ts` while the scope is already held.
-- `lease.filesystem` persists one lock file per scope under `.forge/leases`, uses atomic file creation so separate Forge processes cannot acquire the same scope concurrently, removes stale lock files before acquisition/status, and reports active locks to `forge lease status`. Configure stale cleanup with `FORGE_LEASE_STALE_AFTER_MS` (default: one hour).
+- `lease.filesystem` persists one lock file per scope under `.forge/leases`, uses atomic file creation so separate Forge processes cannot acquire the same scope concurrently, removes stale lock files before acquisition/status, and reports active locks to `forge lease status`. Scopes are acquired in sorted key order so processes contending on overlapping scope sets collide on the first shared scope instead of deadlocking on partial holds. Configure stale cleanup with `FORGE_LEASE_STALE_AFTER_MS` (default: one hour).
 
 Future implementations can back the same interface with Redis, SCM checks, or remote schedulers.
 

@@ -33,6 +33,15 @@ export function hasLease(value: unknown): value is LeaseProvider {
     'release' in value && typeof (value as { release?: unknown }).release === 'function';
 }
 
+// Providers throw this for expected contention (scope held elsewhere); the runtime waits and
+// retries only on this error. Any other acquire error is a provider failure and fails the task.
+export class LeaseConflictError extends Error {
+  constructor(message: string, public scopeKey?: string, public ownerTaskId?: string) {
+    super(message);
+    this.name = 'LeaseConflictError';
+  }
+}
+
 export function leaseScopeKey(scope: TaskResourceScope): string {
-  return `${scope.kind}:${scope.value}`;
+  return `${scope.kind}:${scope.value.trim().replace(/\/+$/, '')}`;
 }

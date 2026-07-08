@@ -227,27 +227,17 @@ Suggested build:
 forge build add provider neutral workspace listing and cleanup commands for completed forge task worktrees --auto-approve
 ```
 
-### 5. Better scheduler state and deferrals
+### 5. Better scheduler state and deferrals — DONE (2026-07-07)
 
-Current `run-ready --parallel` waits/retries leases. Eventually it should report deferred reasons and avoid indefinite waiting.
+Implemented directly in core:
 
-Add:
+- `forge task run-ready --lease-wait <seconds>` bounds lease waiting (default 15 minutes) with exponential backoff (250ms–5s) and log throttling.
+- On timeout the task returns to `ready`, the run record is marked `deferred` (new `RunRecord` status), and the result includes `deferred: true` — never `failed`.
+- Providers signal contention with `LeaseConflictError` (in `src/core/lease.ts`, carries `scopeKey`/`ownerTaskId`); any other acquire error fails the task immediately instead of retrying.
+- `lease.filesystem` acquires scopes in sorted key order to avoid cross-process deadlock on overlapping scope sets, and only maps `EEXIST` to a conflict.
+- `leaseScopeKey()` normalizes values (trim, strip trailing slashes) so `docs` and `docs/` contend.
 
-```bash
-forge task run-ready --parallel 4 --lease-timeout 5m
-```
-
-Behavior:
-
-- if lease unavailable after timeout, task remains ready
-- result includes `deferred` and conflict owner/reason
-- no run record should be marked failed for lease deferral
-
-Suggested build:
-
-```bash
-forge build add lease timeout and deferred task results for parallel run ready scheduling without marking deferred tasks failed --auto-approve
-```
+Remaining follow-up: surface the conflict owner in `run-ready` JSON results (currently only in logs/error message).
 
 ### 6. Provider package/plugin loading
 

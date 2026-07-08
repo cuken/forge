@@ -56,7 +56,7 @@ export interface RunRecord {
   id: string;
   taskId: string;
   taskTitle: string;
-  status: 'running' | 'succeeded' | 'failed';
+  status: 'running' | 'succeeded' | 'failed' | 'deferred';
   startedAt: string;
   updatedAt: string;
   finishedAt?: string;

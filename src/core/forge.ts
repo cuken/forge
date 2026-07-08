@@ -5,7 +5,7 @@ import { hasChangeSet, type AcceptChangeSetResult, type ChangeSetProvider, type 
 import { hasTaskDiscovery, type TaskDiscoveryProvider } from './discovery.js';
 import { hasDoctor, runChecks, type HealthCheckResult } from './health.js';
 import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
-import { hasLease, type LeaseHandle, type LeaseProvider } from './lease.js';
+import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } from './lease.js';
 import { resolveTask } from './resolve.js';
 import { hasSync, runSyncTasks, type SyncInput, type SyncResult } from './sync.js';
 import { hasValidation, type ValidationGateResult, type ValidationProvider } from './validation.js';
@@ -176,11 +176,12 @@ export class ForgeRuntime {
     return result;
   }
 
-  async runReady(taskId?: string, observer?: (event: string) => void, options: { concurrency?: number } = {}) {
+  async runReady(taskId?: string, observer?: (event: string) => void, options: { concurrency?: number; leaseWaitMs?: number } = {}) {
     const ready = (await this.deps.store.list()).filter(t => t.status === 'ready' && (!taskId || t.id === taskId));
     const requestedConcurrency = Math.floor(options.concurrency ?? 1);
     const concurrency = Number.isFinite(requestedConcurrency) && requestedConcurrency > 0 ? requestedConcurrency : 1;
-    const results: Array<{ task: string; run?: string; workspace?: { id: string; path: string; branch: string }; environment?: ExecutionEnvironment; result?: { exitCode: number; output: string }; error?: string }> = [];
+    const leaseWaitMs = options.leaseWaitMs ?? 15 * 60 * 1000;
+    const results: Array<{ task: string; run?: string; workspace?: { id: string; path: string; branch: string }; environment?: ExecutionEnvironment; result?: { exitCode: number; output: string }; deferred?: boolean; error?: string }> = [];
     let next = 0;
     const leaseProvider = this.leaseProvider();
     const runOne = async (task: Task) => {
@@ -192,14 +193,29 @@ export class ForgeRuntime {
       await this.deps.store.update(task.id, { status: 'running' });
       let lease: LeaseHandle | undefined;
       try {
-        if (leaseProvider && hasLease(leaseProvider) && task.discovery?.resourceScopes.length) {
-          await emit(`acquiring ${task.discovery.resourceScopes.length} resource scope lease(s)...\n`);
+        if (leaseProvider && task.discovery?.resourceScopes.length) {
+          const scopes = task.discovery.resourceScopes;
+          await emit(`acquiring ${scopes.length} resource scope lease(s)...\n`);
+          const deadline = Date.now() + leaseWaitMs;
+          let delay = 250;
+          let lastLoggedAt = 0;
           while (!lease) {
             try {
-              lease = await leaseProvider.acquire({ task, scopes: task.discovery.resourceScopes });
+              lease = await leaseProvider.acquire({ task, scopes });
             } catch (error) {
-              await emit(`lease unavailable, waiting: ${String(error)}\n`);
-              await new Promise(resolve => setTimeout(resolve, 25));
+              if (!(error instanceof LeaseConflictError)) throw error;
+              if (Date.now() >= deadline) {
+                await emit(`lease wait exceeded ${leaseWaitMs}ms, deferring task: ${error.message}\n`);
+                await this.deps.store.update(task.id, { status: 'ready' });
+                await this.deps.runStore?.update(run!.id, { status: 'deferred', error: `lease wait timed out: ${error.message}`, finishedAt: new Date().toISOString() });
+                return { task: task.id, run: run?.id, deferred: true, error: error.message };
+              }
+              if (Date.now() - lastLoggedAt >= 10_000) {
+                await emit(`lease unavailable, waiting: ${error.message}\n`);
+                lastLoggedAt = Date.now();
+              }
+              await new Promise(resolve => setTimeout(resolve, Math.min(delay, Math.max(deadline - Date.now(), 1))));
+              delay = Math.min(delay * 2, 5000);
             }
           }
           await emit(`lease ${lease.id} acquired by ${lease.providerId}\n`);
