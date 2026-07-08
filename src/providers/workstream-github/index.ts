@@ -21,6 +21,8 @@ export interface GitHubRestTransport { request<T = unknown>(method: string, path
 const complexities: Task['complexity'][] = ['trivial', 'small', 'medium', 'large'];
 const markerStart = '<!-- forge-workstream:';
 const markerEnd = '-->';
+const bodyStart = '<!-- forge-body:start -->';
+const bodyEnd = '<!-- forge-body:end -->';
 type LinkCache = Record<string, { issueNumber?: number; taskId?: string }>;
 type RawItem = { id?: unknown; title?: unknown; description?: unknown; dependencies?: unknown; complexity?: unknown; status?: unknown; taskId?: unknown };
 
@@ -84,7 +86,7 @@ export class GitHubIssuesWorkstreamProvider implements WorkstreamProvider {
     const current = this.issueToItem(issue, await this.readCache());
     const updated: WorkstreamItem = { ...current, ...patch };
     await this.transport.request('PATCH', `${this.issuesPath()}/${issue.number}`, { body: this.bodyFor(updated, issue.body ?? undefined), labels: this.labelsFor(updated) });
-    if (patch.taskId) await this.transport.request('POST', `${this.issuesPath()}/${issue.number}/comments`, { body: `Forge task id: ${patch.taskId}` });
+    if (patch.taskId) await this.transport.request('POST', `${this.issuesPath()}/${issue.number}/comments`, { body: queueComment(patch.taskId) });
     const cache = await this.readCache();
     cache[id] = { ...cache[id], issueNumber: issue.number, taskId: patch.taskId ?? cache[id]?.taskId };
     cache[`#${issue.number}`] = { issueNumber: issue.number, taskId: patch.taskId ?? cache[`#${issue.number}`]?.taskId };
@@ -121,7 +123,12 @@ export class GitHubIssuesWorkstreamProvider implements WorkstreamProvider {
   private async findIssue(id: string, state: 'open' | 'all' = 'open') { return (await this.listRaw(state)).find(issue => this.issueToItem(issue, {}).id === id || `#${issue.number}` === id || String(issue.number) === id); }
   private async listRaw(state: 'open' | 'all' = 'open') { return (await this.transport.request<GitHubIssue[]>('GET', `${this.issuesPath()}?state=${state}&labels=${encodeURIComponent('forge:workstream')}&per_page=100`)).filter(issue => !issue.pull_request); }
   private labelsFor(item: WorkstreamItem) { return ['forge:workstream', `forge:${item.complexity}`, item.status === 'queued' ? 'forge:queued' : 'forge:planned']; }
-  private bodyFor(item: WorkstreamItem, previous?: string) { const description = stripMetadata(previous ?? item.description ?? '').trim(); const deps = item.dependencies.length ? `\n\nDepends on: ${item.dependencies.join(', ')}` : ''; return `${description}${deps}\n\n${markerStart}${JSON.stringify({ id: item.id, dependencies: item.dependencies, taskId: item.taskId })}${markerEnd}`.trim(); }
+  private bodyFor(item: WorkstreamItem, previous?: string) {
+    const description = stripMetadata(previous ?? item.description ?? '').trim() || '_No description provided._';
+    const deps = item.dependencies.length ? item.dependencies.map(dep => `- \`${dep}\``).join('\n') : '- _None_';
+    const task = item.taskId ? `\`${item.taskId}\`` : '_Not queued yet_';
+    return `${bodyStart}\n${description}\n${bodyEnd}\n\n## Forge workstream details\n\n| Field | Value |\n| --- | --- |\n| Workstream item | \`${item.id}\` |\n| Status | \`${item.status}\` |\n| Complexity | \`${item.complexity}\` |\n| Forge task | ${task} |\n\n## Dependencies\n\n${deps}\n\n${markerStart}${JSON.stringify({ id: item.id, dependencies: item.dependencies, taskId: item.taskId })}${markerEnd}`.trim();
+  }
   private bodyWithCompletionMetadata(previous: string, input: WorkstreamCompletionUpdate) { const metadata = parseMetadata(previous); return this.bodyFor({ id: metadata.id ?? input.itemId, title: input.itemId, description: stripMetadata(previous), dependencies: metadata.dependencies ?? [], complexity: 'small', status: 'planned', taskId: metadata.taskId ?? (typeof input.metadata?.taskId === 'string' ? input.metadata.taskId : undefined) }).replace(markerEnd, `,"completion":${JSON.stringify({ status: input.status, acceptedRunId: input.acceptedRunId, commit: input.commit, sync: input.sync })}${markerEnd}`); }
   private owner() { return this.config.owner ?? process.env.GITHUB_OWNER; }
   private repo() { return this.config.repo ?? process.env.GITHUB_REPO; }
@@ -141,13 +148,22 @@ function parseHumanDependencies(body: string): string[] {
   }
   return [...refs];
 }
-function stripMetadata(body: string): string { const start = body.indexOf(markerStart); if (start === -1) return body.trim(); const end = body.indexOf(markerEnd, start); return `${body.slice(0, start)}${end === -1 ? '' : body.slice(end + markerEnd.length)}`.replace(/\n\nDepends on:.*$/s, '').trim(); }
+function stripMetadata(body: string): string {
+  const bodyRegionStart = body.indexOf(bodyStart);
+  const bodyRegionEnd = body.indexOf(bodyEnd, bodyRegionStart + bodyStart.length);
+  if (bodyRegionStart !== -1 && bodyRegionEnd !== -1) return body.slice(bodyRegionStart + bodyStart.length, bodyRegionEnd).trim();
+  const start = body.indexOf(markerStart);
+  if (start === -1) return body.trim();
+  const end = body.indexOf(markerEnd, start);
+  return `${body.slice(0, start)}${end === -1 ? '' : body.slice(end + markerEnd.length)}`.replace(/\n\nDepends on:.*$/s, '').trim();
+}
+function queueComment(taskId: string): string { return `## Forge queued this work\n\n- Task: \`${taskId}\`\n\nForge will update this issue again when the linked task is accepted.`; }
 function completionComment(input: WorkstreamCompletionUpdate): string {
-  const lines = [`Forge accepted run ${input.acceptedRunId ?? '(unknown run)'}.`];
-  if (input.metadata?.taskId) lines.push(`Task: ${input.metadata.taskId}${input.metadata.taskTitle ? ` — ${input.metadata.taskTitle}` : ''}`);
-  if (input.commit) lines.push(`Commit: ${formatRef(input.commit)}`);
-  if (input.sync) lines.push(`Sync: ${formatRef(input.sync)}`);
-  if (input.comment) lines.push('', input.comment);
+  const lines = ['## Forge completed this work', '', `- Accepted run: \`${input.acceptedRunId ?? 'unknown'}\``];
+  if (input.metadata?.taskId) lines.push(`- Task: \`${input.metadata.taskId}\`${input.metadata.taskTitle ? ` — ${input.metadata.taskTitle}` : ''}`);
+  if (input.commit) lines.push(`- Commit: ${formatRef(input.commit)}`);
+  if (input.sync) lines.push(`- Sync: ${formatRef(input.sync)}`);
+  if (input.comment) lines.push('', '### Acceptance message', '', input.comment);
   return lines.join('\n');
 }
 function formatRef(ref: NonNullable<WorkstreamCompletionUpdate['commit']>): string { return [ref.sha, ref.branch, ref.url, ref.status, ref.message].filter(Boolean).join(' | '); }

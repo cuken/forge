@@ -69,6 +69,9 @@ describe('GitHubIssuesWorkstreamProvider', () => {
     const create = transport.requests.find(request => request.method === 'POST' && request.path.endsWith('/issues'));
     expect(create?.body).toMatchObject({ title: 'New slice', labels: ['forge:workstream', 'forge:medium', 'forge:planned'] });
     expect(JSON.stringify(create?.body)).toContain('github-provider');
+    expect((create?.body as { body?: string }).body).toContain('## Forge workstream details');
+    expect((create?.body as { body?: string }).body).toContain('| Complexity | `medium` |');
+    expect((create?.body as { body?: string }).body).toContain('- `github-provider`');
     await expect(readFile(join(root, '.forge', 'github-workstream-links.json'), 'utf8')).resolves.toContain('new-slice');
   });
 
@@ -82,7 +85,7 @@ describe('GitHubIssuesWorkstreamProvider', () => {
     const patch = transport.requests.find(request => request.method === 'PATCH' && request.path.endsWith('/issues/1'));
     expect(patch?.body).toMatchObject({ labels: ['forge:workstream', 'forge:large', 'forge:queued'] });
     expect(JSON.stringify(patch?.body)).toContain('task-123');
-    expect(transport.requests.some(request => request.method === 'POST' && request.path.endsWith('/comments') && (request.body as { body?: string }).body === 'Forge task id: task-123')).toBe(true);
+    expect(transport.requests.some(request => request.method === 'POST' && request.path.endsWith('/comments') && (request.body as { body?: string }).body?.includes('## Forge queued this work') && (request.body as { body?: string }).body?.includes('`task-123`'))).toBe(true);
     await expect(readFile(join(root, '.forge', 'github-workstream-links.json'), 'utf8')).resolves.toContain('task-123');
   });
 
@@ -107,7 +110,8 @@ describe('GitHubIssuesWorkstreamProvider', () => {
     expect(JSON.stringify(patch?.body)).toContain('run-123');
     expect(JSON.stringify(patch?.body)).toContain('abc123');
     const comment = transport.requests.find(request => request.method === 'POST' && request.path.endsWith('/comments'));
-    expect((comment?.body as { body?: string }).body).toContain('Forge accepted run run-123');
+    expect((comment?.body as { body?: string }).body).toContain('## Forge completed this work');
+    expect((comment?.body as { body?: string }).body).toContain('`run-123`');
     expect((comment?.body as { body?: string }).body).toContain('task-123');
     expect((comment?.body as { body?: string }).body).toContain('abc123');
     expect((comment?.body as { body?: string }).body).toContain('pushed');
@@ -132,7 +136,7 @@ describe('GitHubIssuesWorkstreamProvider', () => {
     expect(JSON.stringify(close?.body)).toContain(task.id);
     expect(JSON.stringify(close?.body)).toContain('abc123');
     const comments = transport.requests.filter(request => request.method === 'POST' && request.path.endsWith('/issues/1/comments'));
-    expect(comments.some(request => (request.body as { body?: string }).body?.includes(`Forge accepted run ${run}`))).toBe(true);
+    expect(comments.some(request => (request.body as { body?: string }).body?.includes(`Accepted run: \`${run}\``))).toBe(true);
 
     const failingTransport = new MockGitHub();
     failingTransport.issues[0].body = 'Use issues\n\n<!-- forge-workstream:{"id":"github-provider","dependencies":["base"]}-->';
