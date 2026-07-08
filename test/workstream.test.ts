@@ -15,7 +15,7 @@ import type { AgentProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } f
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; async isRepo(){return true;} async init(){} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
 class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; async create(input:{task:Task}){ return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; async run(){ return { exitCode: 0, output: 'ok' }; } }
-class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
+class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; constructor(private refs: { commit?: { sha: string; branch: string }; sync?: { id: string; url: string; status: string } } = {}) {} async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt', commit: this.refs.commit ? { providerId: this.id, sha: this.refs.commit.sha, id: this.refs.commit.sha, branch: this.refs.commit.branch } : undefined, sync: this.refs.sync ? { providerId: this.id, ...this.refs.sync } : undefined }; } }
 class MemorySpec implements SpecProvider { id='spec.memory'; kind='spec' as const; async generateSpec(input:{task:Task}){ return { providerId: this.id, body: `# Generated spec\n\n${input.task.title}` }; } }
 class BrokenWorkstream implements WorkstreamProvider { id='workstream.broken'; kind='workstream' as const; async import(){ return []; } async list(): Promise<WorkstreamItem[]> { throw new Error('tracker unavailable'); } async update(){ throw new Error('tracker unavailable'); } }
 class RecordingWorkstreamCompletion implements WorkstreamCompletionProvider { id='workstream-completion.memory'; kind='workstream-completion' as const; updates: WorkstreamCompletionUpdate[] = []; async completeWorkstreamItem(input: WorkstreamCompletionUpdate) { this.updates.push(input); } }
@@ -39,9 +39,9 @@ class MemoryPlanner implements WorkstreamPlannerProvider {
   }
 }
 
-async function makeRuntime(planner?: WorkstreamPlannerProvider, workstreamCompletion?: WorkstreamCompletionProvider) {
+async function makeRuntime(planner?: WorkstreamPlannerProvider, workstreamCompletion?: WorkstreamCompletionProvider, changeSet = new MemoryChangeSet()) {
   const root = await mkdtemp(join(tmpdir(), 'forge-workstream-test-'));
-  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet: new MemoryChangeSet(), spec: new MemorySpec(), workstream: new FileWorkstreamProvider(root), workstreamCompletion, workstreamPlanner: planner });
+  const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), agent: new MemoryAgent(), changeSet, spec: new MemorySpec(), workstream: new FileWorkstreamProvider(root), workstreamCompletion, workstreamPlanner: planner });
   return { rt, root };
 }
 
@@ -73,16 +73,28 @@ describe('workstream backlog', () => {
     expect(items[0].taskId).toBe(tasks[0].id);
   });
 
-  it('sends provider-neutral completion audit metadata when an accepted run completes a linked workstream item', async () => {
+  it('sends provider-neutral completion audit metadata using the accepted run reference without guessing sync data', async () => {
     const completion = new RecordingWorkstreamCompletion();
-    const { rt, root } = await makeRuntime(undefined, completion);
+    const { rt, root } = await makeRuntime(undefined, completion, new MemoryChangeSet({ commit: { sha: 'abc123', branch: 'forge/task-1' } }));
     await importItems(rt, root, [{ id: 'complete-me', title: 'Complete me', complexity: 'small' }]);
     const [task] = await rt.enqueueWorkstream();
 
     const [{ run }] = await rt.runReady(task.id);
     await rt.acceptRun(run!, 'ship linked item');
 
-    expect(completion.updates).toEqual([{ itemId: 'complete-me', status: 'completed', acceptedRunId: run!, comment: 'accepted file.txt', commit: { providerId: 'change-set.memory', status: 'accepted', message: 'accepted file.txt' }, metadata: { taskId: task.id, taskTitle: 'Complete me' } }]);
+    expect(completion.updates).toEqual([{ itemId: 'complete-me', status: 'completed', acceptedRunId: run!, comment: 'accepted file.txt', commit: { providerId: 'change-set.memory', sha: 'abc123', id: 'abc123', branch: 'forge/task-1' }, sync: undefined, metadata: { taskId: task.id, taskTitle: 'Complete me' } }]);
+  });
+
+  it('includes provider-reported sync or push references in completion audits when available', async () => {
+    const completion = new RecordingWorkstreamCompletion();
+    const { rt, root } = await makeRuntime(undefined, completion, new MemoryChangeSet({ commit: { sha: 'def456', branch: 'forge/task-2' }, sync: { id: 'pr-17', url: 'https://example.test/pull/17', status: 'open' } }));
+    await importItems(rt, root, [{ id: 'sync-me', title: 'Sync me', complexity: 'small' }]);
+    const [task] = await rt.enqueueWorkstream();
+
+    const [{ run }] = await rt.runReady(task.id);
+    await rt.acceptRun(run!, 'ship synced item');
+
+    expect(completion.updates[0]).toMatchObject({ itemId: 'sync-me', acceptedRunId: run, commit: { sha: 'def456', branch: 'forge/task-2' }, sync: { providerId: 'change-set.memory', id: 'pr-17', url: 'https://example.test/pull/17', status: 'open' } });
   });
 
   it('does not create duplicate tasks when enqueue runs twice', async () => {

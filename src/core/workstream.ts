@@ -24,6 +24,8 @@ export function hasWorkstream(provider: unknown): provider is WorkstreamProvider
 export interface WorkstreamCompletionRef {
   providerId?: string;
   id?: string;
+  sha?: string;
+  branch?: string;
   url?: string;
   message?: string;
   status?: string;
