@@ -90,6 +90,12 @@ Initial implementation: `build-planner.heuristic`. Future implementations can su
 
 Initial implementation: `task-discovery.heuristic`, which recognizes explicit file paths and broad terms such as provider, config, docs, tests, task metadata, resource scopes, and discovery.
 
+## Change sets
+
+`ChangeSetProvider` lets Forge review and accept changes produced by completed runs without hardcoding a VCS or code-host workflow into the runtime. `review()` returns an `empty` or `changed` summary with user-visible file and diff information. `accept()` returns an `accepted`, `empty`, or `blocked` result with a human-readable `message`.
+
+Providers must use `blocked` for expected, user-fixable refusal cases instead of throwing or inventing provider-specific typed states. The runtime records the returned message in run acceptance metadata and leaves the task in `reviewing`; callers can show the reason and retry after the user fixes the condition. Throw only for unexpected provider failures. The built-in `change-set.git-worktree` provider returns `blocked` when the target project checkout has uncommitted changes, preserving the reason `Cannot accept change set: project checkout has uncommitted changes` in CLI output and run state.
+
 ## Resource scope leasing
 
 `LeaseProvider` lets Forge coordinate potentially-conflicting ready tasks without coupling the runtime to a specific queue, lock service, code host, or database. When a task has discovery `resourceScopes`, `ForgeRuntime.runReady()` acquires a lease before creating the workspace and releases it in a `finally` hook after the agent run completes or fails.

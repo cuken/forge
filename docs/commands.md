@@ -232,11 +232,11 @@ Each command executes in the completed run workspace. Any non-zero exit is a fai
 
 ## `forge runs accept <id>`
 
-Accepts the provider-neutral change set for a succeeded run whose task is `reviewing`, then marks the task `done`. Validation gates run first; acceptance is blocked if any gate fails.
+Accepts the provider-neutral change set for a succeeded run whose task is `reviewing`, then marks the task `done` only when the provider returns `accepted` or `empty`. Validation gates run first; acceptance is blocked if any gate fails or if the change-set provider returns a `blocked` result with a human-readable reason.
 
 Options:
 
 - `-m, --message <message>` — accept/commit message passed to the change set provider
 - `--dry-run` — run validation and review the change set without accepting, merging, or marking the task done
 
-The built-in Git worktree implementation stages and commits workspace changes on the run branch, then merges that branch into the project checkout. Successful acceptance records acceptance metadata on the run record; validation results are recorded for both normal and dry-run accepts.
+The built-in Git worktree implementation first checks the project checkout that will receive the merge. If that checkout has uncommitted changes, `forge runs accept` prints a `blocked` result such as `blocked <run>: Cannot accept change set: project checkout has uncommitted changes`, exits non-zero, records that reason in the run acceptance metadata, and leaves the task in `reviewing` for a human to clean up and retry. Otherwise it stages and commits workspace changes on the run branch, then merges that branch into the project checkout. Successful or blocked acceptance records acceptance metadata on the run record; validation results are recorded for both normal and dry-run accepts.

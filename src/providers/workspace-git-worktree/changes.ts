@@ -36,13 +36,16 @@ export class GitWorktreeChangeSetProvider implements ChangeSetProvider {
     const review = await this.review(input);
     if (review.status === 'empty') return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'empty' as const, message: 'No changes to accept' };
 
+    const rootGit = simpleGit(this.root);
+    const rootStatus = await rootGit.status();
+    if (!rootStatus.isClean()) {
+      return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'blocked' as const, message: 'Cannot accept change set: project checkout has uncommitted changes' };
+    }
+
     const worktreeGit = simpleGit(ws.path);
     await worktreeGit.add('.');
     const commit = await worktreeGit.commit(input.message ?? `Accept Forge run ${input.run.id}: ${input.run.taskTitle}`);
 
-    const rootGit = simpleGit(this.root);
-    const rootStatus = await rootGit.status();
-    if (!rootStatus.isClean()) throw new Error('Cannot accept change set: project checkout has uncommitted changes');
     await rootGit.merge([ws.branch]);
     return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: `Accepted ${commit.commit} from ${ws.branch}` };
   }
