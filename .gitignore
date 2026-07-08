@@ -11,3 +11,5 @@ dist/
 .env
 .DS_Store
 .claude/settings.local.json
+.forge/github-workstream-links.json
+.forge/linear-workstream-links.json

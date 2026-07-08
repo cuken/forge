@@ -130,6 +130,7 @@ commands = ["npm ci", "npm test", "npm run build"]
 - Current providers:
   - `workstream.filesystem` — backlog state in `.forge/workstream.json`; re-import merges by id and preserves queued state
   - `workstream.linear` — Linear GraphQL backend (`[providers] workstream = "linear"`, `[linear] teamKey = "ENG"`, `LINEAR_API_KEY` env); issue identifiers are item ids, `forge:*` labels map complexity/queued state, blocked-by relations map dependencies, task links cached in `.forge/linear-workstream-links.json`. Not yet smoke-tested against a live workspace.
+  - `workstream.github` — GitHub Issues REST backend (`[providers] workstream = "github"`, `[github] owner`/`repo`; token from `GITHUB_TOKEN`/`GH_TOKEN` or `gh auth token` fallback). Issues labelled `forge:workstream` are the backlog; `forge:*` labels map complexity/queued state, a hidden issue-body metadata block round-trips ids/dependencies/taskId, and hand-written `Depends on #N` / `Blocked by #N` phrasing is honored on issues without metadata. Smoke-tested live against cuken/forge (2026-07-08): create, list, queue label + comment all verified. Note: GitHub's issues list endpoint has brief read-after-write lag, so an import's returned list can momentarily miss a just-created issue.
   - `workstream-planner.pi` — asks pi for clarifying questions, then for a JSON plan; lenient JSON extraction from chatty output
 - Commands:
   - `forge workstream plan <prompt...> [--no-questions]`

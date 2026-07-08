@@ -116,8 +116,9 @@ Built-in implementations:
 
 - `workstream.filesystem` imports JSON arrays or `{ "items": [...] }` documents and stores normalized backlog state in `.forge/workstream.json`, preserving queued status/task links when a roadmap is re-imported.
 - `workstream.linear` backs the contract with Linear's GraphQL API. Select it with `[providers] workstream = "linear"`, configure `[linear] teamKey = "ENG"` and optional `project = "Roadmap"`, and set `LINEAR_API_KEY` in the environment. Linear issue identifiers become item ids; `forge:trivial|small|medium|large` labels map complexity (default `small`), `forge:queued` maps queued status, blocked-by issue relations map dependencies, and a local `.forge/linear-workstream-links.json` cache records Forge task links. `update()` applies the queued label and posts a comment with the Forge task id. The provider declares doctor checks for the API key and required config.
+- `workstream.github` backs the contract with GitHub Issues. Select it with `[providers] workstream = "github"`, configure `[github] owner = "OWNER"` and `repo = "REPO"`, and set `GITHUB_TOKEN` or `GH_TOKEN`. Imported items become open issues labelled `forge:workstream`, `forge:planned|queued`, and `forge:trivial|small|medium|large`; item ids, dependency ids, and queued Forge task ids are written to a hidden issue-body metadata block, with dependency references also rendered as `Depends on:` text. A local `.forge/github-workstream-links.json` cache preserves task links for issue ids. `update()` rewrites labels/body state and comments with the Forge task id. The provider declares doctor checks for token and repository config.
 
-Future implementations can back the same interface with GitHub Issues, Jira, or any tracker that can represent titled items with dependencies — the runtime never sees tracker-specific concepts.
+Future implementations can back the same interface with Jira or any tracker that can represent titled items with dependencies — the runtime never sees tracker-specific concepts.
 
 ## Workstream planning
 
@@ -135,6 +136,7 @@ Built-in implementation: `workstream-planner.pi`, which runs the configured pi c
 - `src/providers/lease-filesystem` implements cross-process `LeaseProvider` locks in `.forge/leases` with stale lease cleanup and status reporting.
 - `src/providers/workstream-filesystem` implements `WorkstreamProvider` by importing/listing normalized backlog JSON in `.forge/workstream.json`.
 - `src/providers/workstream-linear` implements `WorkstreamProvider` against Linear GraphQL, including labels, issue relations, comments, link-cache persistence, and doctor checks.
+- `src/providers/workstream-github` implements `WorkstreamProvider` against GitHub Issues, including labels, issue-body metadata, comments, link-cache persistence, and doctor checks.
 - `src/providers/planner-pi` implements `WorkstreamPlannerProvider` by interviewing through pi and emitting dependency-ordered workstream drafts.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.

@@ -21,7 +21,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - provider-neutral validation gates before accepting completed runs
 - optional parallel dispatch for multiple ready tasks
 - filesystem resource-scope lease provider with stale cleanup for coordinating parallel Forge processes
-- provider-neutral workstream backlog import/list/enqueue flow backed by filesystem JSON
+- provider-neutral workstream backlog import/list/enqueue flow backed by filesystem JSON, Linear, or GitHub Issues
 - interactive workstream planning through a generic planner provider (pi-backed interview by default)
 
 ## Self-augmentation docs

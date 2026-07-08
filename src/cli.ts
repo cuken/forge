@@ -20,6 +20,7 @@ import { MemoryLeaseProvider } from './providers/lease-memory/index.js';
 import { FileLeaseProvider } from './providers/lease-filesystem/index.js';
 import { FileWorkstreamProvider } from './providers/workstream-filesystem/index.js';
 import { LinearWorkstreamProvider } from './providers/workstream-linear/index.js';
+import { GitHubIssuesWorkstreamProvider } from './providers/workstream-github/index.js';
 import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
 import { createInterface } from 'node:readline/promises';
 
@@ -43,12 +44,16 @@ function runtime() {
   const requestedLease = config?.providers?.lease;
   if (requestedLease && !['memory', 'lease.memory', 'filesystem', 'lease.filesystem'].includes(requestedLease)) throw new Error(`Unknown lease provider '${requestedLease}'. Expected memory, filesystem, lease.memory, or lease.filesystem.`);
   const requestedWorkstream = config?.providers?.workstream;
-  if (requestedWorkstream && !['filesystem', 'workstream.filesystem', 'linear', 'workstream.linear'].includes(requestedWorkstream)) throw new Error(`Unknown workstream provider '${requestedWorkstream}'. Expected filesystem, linear, workstream.filesystem, or workstream.linear.`);
+  if (requestedWorkstream && !['filesystem', 'workstream.filesystem', 'linear', 'workstream.linear', 'github', 'workstream.github'].includes(requestedWorkstream)) throw new Error(`Unknown workstream provider '${requestedWorkstream}'. Expected filesystem, linear, github, workstream.filesystem, workstream.linear, or workstream.github.`);
   const requestedPlanner = config?.providers?.workstreamPlanner;
   if (requestedPlanner && requestedPlanner !== 'pi' && requestedPlanner !== 'workstream-planner.pi') throw new Error(`Unknown workstream planner provider '${requestedPlanner}'. Expected pi or workstream-planner.pi.`);
   const staleAfterMs = process.env.FORGE_LEASE_STALE_AFTER_MS ? Number(process.env.FORGE_LEASE_STALE_AFTER_MS) : undefined;
   const lease = requestedLease === 'filesystem' || requestedLease === 'lease.filesystem' ? new FileLeaseProvider(process.cwd(), staleAfterMs) : new MemoryLeaseProvider();
-  const workstream = requestedWorkstream === 'linear' || requestedWorkstream === 'workstream.linear' ? new LinearWorkstreamProvider(config?.linear ?? {}) : new FileWorkstreamProvider();
+  const workstream = requestedWorkstream === 'linear' || requestedWorkstream === 'workstream.linear'
+    ? new LinearWorkstreamProvider(config?.linear ?? {})
+    : requestedWorkstream === 'github' || requestedWorkstream === 'workstream.github'
+      ? new GitHubIssuesWorkstreamProvider(config?.github ?? {})
+      : new FileWorkstreamProvider();
   return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) });
 }
 

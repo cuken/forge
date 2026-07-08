@@ -125,7 +125,7 @@ After planning: `forge workstream enqueue` to queue unblocked items, then `forge
 
 ## `forge workstream import [path]`
 
-Imports provider-neutral roadmap/workstream backlog items from JSON into the configured `WorkstreamProvider`. The built-in filesystem provider stores normalized items in `.forge/workstream.json`. Input may be an array or an object with an `items` array. Each item supports `id`, `title`, `description`, `dependencies`, and `complexity` (`trivial|small|medium|large`).
+Imports provider-neutral roadmap/workstream backlog items from JSON into the configured `WorkstreamProvider`. The built-in filesystem provider stores normalized items in `.forge/workstream.json`; `[providers] workstream = "github"` stores items as GitHub issues using `[github] owner`/`repo` plus `GITHUB_TOKEN` or `GH_TOKEN`. Input may be an array or an object with an `items` array. Each item supports `id`, `title`, `description`, `dependencies`, and `complexity` (`trivial|small|medium|large`).
 
 Import merges by item `id`: incoming items update matching backlog items (preserving the queued status and task linkage of items that were already enqueued), new items are appended, and backlog items absent from the file are kept. Pass `--replace` to rewrite the entire backlog from the file instead.
 
