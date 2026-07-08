@@ -38,6 +38,7 @@ Unknown notification providers or channels fail during CLI wiring before command
 - selected isolation provider via `FORGE_ISOLATION=host|docker|podman` or `.forge/config.toml`
 - `agent.pi`: pi binary, pi version
 - `scm.github`: gh binary, gh auth, repo detection
+- `gate.github-issues`: gh auth and `[github] owner`/`repo` config when `[providers] gate = "github"` is enabled
 
 Exit code is non-zero if any check fails. Warnings are printed but do not fail the command.
 

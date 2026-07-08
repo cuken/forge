@@ -24,6 +24,7 @@ import { FileLeaseProvider } from './providers/lease-filesystem/index.js';
 import { FileWorkstreamProvider } from './providers/workstream-filesystem/index.js';
 import { LinearWorkstreamProvider } from './providers/workstream-linear/index.js';
 import { GitHubIssuesWorkstreamProvider } from './providers/workstream-github/index.js';
+import { GitHubIssuesGateProvider } from './providers/gate-github-issues/index.js';
 import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
 import { PiSpecProvider } from './providers/spec-pi/index.js';
 import { ConsoleNotificationProvider, type ConsoleNotificationChannel } from './providers/notification-console/index.js';
@@ -102,6 +103,8 @@ function runtime() {
   if (requestedPlanner && requestedPlanner !== 'pi' && requestedPlanner !== 'workstream-planner.pi') throw new Error(`Unknown workstream planner provider '${requestedPlanner}'. Expected pi or workstream-planner.pi.`);
   const requestedSpec = config?.providers?.spec ?? 'pi';
   if (requestedSpec && requestedSpec !== 'pi' && requestedSpec !== 'spec.pi') throw new Error(`Unknown spec provider '${requestedSpec}'. Expected pi or spec.pi.`);
+  const requestedGate = config?.providers?.gate;
+  if (requestedGate && requestedGate !== 'github' && requestedGate !== 'gate.github-issues') throw new Error(`Unknown gate provider '${requestedGate}'. Expected github or gate.github-issues.`);
   const staleAfterMs = process.env.FORGE_LEASE_STALE_AFTER_MS ? Number(process.env.FORGE_LEASE_STALE_AFTER_MS) : undefined;
   const lease = requestedLease === 'filesystem' || requestedLease === 'lease.filesystem' ? new FileLeaseProvider(process.cwd(), staleAfterMs) : new MemoryLeaseProvider();
   const workstream = requestedWorkstream === 'linear' || requestedWorkstream === 'workstream.linear'
@@ -109,7 +112,8 @@ function runtime() {
     : requestedWorkstream === 'github' || requestedWorkstream === 'workstream.github'
       ? new GitHubIssuesWorkstreamProvider(config?.github ?? {})
       : new FileWorkstreamProvider();
-  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), releaseStore: new FileReleaseStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(config?.github), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), spec: requestedSpec ? new PiSpecProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) : undefined, notification: notificationProvider() });
+  const gate = requestedGate ? new GitHubIssuesGateProvider(config?.github ?? {}) : undefined;
+  return new ForgeRuntime({ store: new FileTaskStore(), runStore: new FileRunStore(), releaseStore: new FileReleaseStore(), vcs: new GitVcsProvider(), workspace: new GitWorktreeProvider(), isolation: isolationProvider(), agent: new PiAgentProvider('pi', ['-p']), scm: new GitHubScmProvider(config?.github), buildPlanner: new HeuristicBuildPlannerProvider(), changeSet: new GitWorktreeChangeSetProvider(), validation, taskDiscovery: new HeuristicTaskDiscoveryProvider(), lease, workstream, workstreamPlanner: new PiWorkstreamPlannerProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']), spec: requestedSpec ? new PiSpecProvider(config?.pi?.command ?? 'pi', config?.pi?.args ?? ['-p']) : undefined, notification: notificationProvider(), gate });
 }
 
 export const program = new Command();
