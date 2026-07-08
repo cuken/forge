@@ -37,7 +37,7 @@ Defined in `src/core/health.ts`, `src/core/sync.ts`, and related capability file
 - `ReleaseVcsProvider` — prepares provider-neutral release records for human merge/release review without hardcoded branch behavior
 - `GateProvider` — bridges Forge approval gates to external systems without exposing tracker-specific concepts to core
 
-Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`. Provider-owned doctor checks should cover external/environmental prerequisites that the runtime cannot know about; for example, `change-set.git-worktree` verifies Git worktree metadata and `.git` pointer accessibility so `forge doctor` can flag container mounts that would make review/accept fail.
+Optional capabilities must be discovered structurally with guards like `hasDoctor()` and `hasSync()`. Provider-owned doctor checks should cover external/environmental prerequisites that the runtime cannot know about; for example, `change-set.git-worktree` verifies Git worktree metadata and `.git` pointer accessibility so `forge doctor` can flag container mounts that would make review/accept fail. Notification providers also declare channel-readiness checks so `forge doctor` can report whether the selected console stream or filesystem audit log is writable before run lifecycle events are emitted.
 
 ## Provider rules
 
@@ -182,9 +182,9 @@ Expected human outcomes should be returned as decision statuses rather than thro
 
 `ForgeRuntime` discovers this capability structurally with `hasNotification()`. Providers that do not implement it are ignored. When an agent run completes successfully, the runtime emits `run.succeeded` after persisting the completed `RunRecord`, so notification providers receive provider-neutral data such as task id/title, run id/status, workspace, environment, agent id, exit code, and finish time. When an agent exits non-zero or Forge catches an execution error, the runtime emits `run.failed` after persisting the failed `RunRecord` and includes `metadata.failureReason` (plus `metadata.exitCode` for non-zero exits). Notification delivery is best-effort: provider failures are swallowed so a broken notification backend cannot change task/run state or mask the real agent result. Providers should therefore log or track their own delivery errors if users need diagnostics.
 
-The built-in `notification.console` implementation writes lifecycle messages to either `stderr` or `stdout`. Select it with `[providers] notification = "console"` and `[notifications] channel = "stderr"` (or `"stdout"`).
+The built-in `notification.console` implementation writes lifecycle messages to either `stderr` or `stdout`. Select it with `[providers] notification = "console"` and `[notifications] channel = "stderr"` (or `"stdout"`). Its doctor check reports whether the selected stream is writable.
 
-The built-in `notification.filesystem` implementation appends audit records to `.forge/audit.log` as JSON Lines. Select it with `[providers] notification = "filesystem"` and `[notifications] channel = "audit"`. Each record includes a timestamp, channel, event, message, task summary, optional run summary, and optional metadata such as failure details. Unknown notification providers or channels fail during CLI wiring before Forge starts work, matching the validation behavior for other configured providers.
+The built-in `notification.filesystem` implementation appends audit records to `.forge/audit.log` as JSON Lines. Select it with `[providers] notification = "filesystem"` and `[notifications] channel = "audit"`. Each record includes a timestamp, channel, event, message, task summary, optional run summary, and optional metadata such as failure details. Its doctor checks report audit-channel configuration and whether `.forge/audit.log` can be prepared for appends. Unknown notification providers or channels fail during CLI wiring before Forge starts work, matching the validation behavior for other configured providers.
 
 Future implementations can deliver the same neutral events through any channel or service while keeping runtime orchestration provider-neutral.
 
@@ -200,8 +200,8 @@ Future implementations can deliver the same neutral events through any channel o
 - `src/providers/gate-github-issues` implements `GateProvider` against GitHub Issues through `gh api`, including spec/run issue bodies, labels, comment commands, and doctor checks.
 - `src/providers/planner-pi` implements `WorkstreamPlannerProvider` by interviewing through pi and emitting dependency-ordered workstream drafts.
 - `src/providers/spec-pi` implements `SpecProvider` by asking pi to draft Markdown specs for gated tasks.
-- `src/providers/notification-console` implements `NotificationProvider` by writing run lifecycle notifications to the configured console stream.
-- `src/providers/notification-filesystem` implements `NotificationProvider` by appending run lifecycle notifications to `.forge/audit.log` for the local `audit` channel.
+- `src/providers/notification-console` implements `NotificationProvider` by writing run lifecycle notifications to the configured console stream, and `DoctorProvider` by checking stream writability.
+- `src/providers/notification-filesystem` implements `NotificationProvider` by appending run lifecycle notifications to `.forge/audit.log` for the local `audit` channel, and `DoctorProvider` by checking audit channel configuration plus audit log writability.
 - Future `GateProvider` implementations can publish spec approval and run acceptance decisions to trackers, chats, review tools, or other durable approval systems.
 - `src/providers/store-filesystem` stores task JSON under `.forge/tasks` and release JSON under `.forge/releases`.
 - `src/providers/vcs-git` implements Git VCS, doctor checks, and sync tasks.

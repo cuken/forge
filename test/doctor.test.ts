@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ForgeRuntime } from '../src/core/forge.js';
 import type { AgentProvider, TaskStore, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 import type { DoctorProvider } from '../src/core/health.js';
+import { ConsoleNotificationProvider } from '../src/providers/notification-console/index.js';
 
 const store: TaskStore = { id:'store', kind:'task-store', init:async()=>{}, create:async()=>{throw new Error('unused')}, get:async()=>null, list:async()=>[], update:async()=>{throw new Error('unused')} };
 const vcs: VcsProvider = { id:'vcs', kind:'vcs', isRepo:async()=>true, init:async()=>{}, currentBranch:async()=>'main', status:async()=>({clean:true, summary:''}) };
@@ -12,5 +13,10 @@ describe('doctor', () => {
   it('runs checks declared by providers instead of hardcoded runtime checks', async () => {
     const rt = new ForgeRuntime({ store, vcs, workspace, agent });
     await expect(rt.doctor()).resolves.toEqual([{ id:'agent.checked:model', status:'pass', message:'model available' }]);
+  });
+
+  it('includes notification provider readiness checks', async () => {
+    const rt = new ForgeRuntime({ store, vcs, workspace, agent, notification: new ConsoleNotificationProvider('stderr') });
+    await expect(rt.doctor()).resolves.toContainEqual({ id:'notification.console:channel', status:'pass', message:'stderr notification channel is writable' });
   });
 });
