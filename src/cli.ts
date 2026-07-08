@@ -26,6 +26,44 @@ import { PiWorkstreamPlannerProvider } from './providers/planner-pi/index.js';
 import { ConsoleNotificationProvider, type ConsoleNotificationChannel } from './providers/notification-console/index.js';
 import { createInterface } from 'node:readline/promises';
 
+const useColor = process.env.NO_COLOR === undefined && process.stdout.isTTY;
+const color = (code: number, text: string) => useColor ? `\u001b[${code}m${text}\u001b[0m` : text;
+const dim = (text: string) => color(2, text);
+const cyan = (text: string) => color(36, text);
+const green = (text: string) => color(32, text);
+const yellow = (text: string) => color(33, text);
+const red = (text: string) => color(31, text);
+const magenta = (text: string) => color(35, text);
+
+export function logPrefix(label: string, now = new Date()) {
+  const timestamp = now.toISOString().slice(11, 19);
+  return `${dim(timestamp)} ${cyan(label.padEnd(10))}`;
+}
+
+export function processLogLine(label: string, message: string, emoji = '•', now = new Date()) {
+  return `${logPrefix(label, now)} ${emoji} ${message}`;
+}
+
+function logProcess(label: string, message: string, emoji = '•') {
+  console.log(processLogLine(label, message, emoji));
+}
+
+function processObserver() {
+  let buffered = '';
+  return (chunk: string) => {
+    buffered += chunk;
+    const lines = buffered.split(/\r?\n/);
+    buffered = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const lower = line.toLowerCase();
+      const label = lower.startsWith('yolo:') ? 'wdo' : lower.includes('lease') ? 'lease' : lower.includes('workspace') ? 'workspace' : lower.includes('environment') ? 'runner' : lower.includes('agent') ? 'agent' : lower.startsWith('starting task') ? 'task' : 'runner';
+      const emoji = label === 'wdo' ? '⚡' : label === 'lease' ? '🔒' : label === 'workspace' ? '🌿' : label === 'agent' ? '🤖' : label === 'task' ? '🚀' : '▶';
+      process.stdout.write(`${processLogLine(label, line, emoji)}\n`);
+    }
+  };
+}
+
 export function isolationProvider() {
   const configured = readForgeConfigSync()?.providers?.isolation;
   const requested = process.env.FORGE_ISOLATION ?? configured ?? 'host';
@@ -143,13 +181,15 @@ program.command('process').description('Continuously sweep the workstream: enque
   }).finally(() => { wakeSleep = undefined; });
   try {
     do {
-      const result = await rt.sweepWorkstream(chunk => process.stdout.write(chunk), { concurrency: opts.parallel, yolo: opts.yolo });
-      console.log(`sweep: enqueued ${result.enqueued.length}, ran ${result.runResults.length}`);
-      if (opts.yolo) console.log(`yolo: specced ${result.yolo.specced.length}, approved ${result.yolo.approved.length}, accepted ${result.yolo.accepted.length}, errors ${result.yolo.errors.length}`);
-      for (const error of result.yolo.errors) console.log(`yolo error: ${error}`);
-      if (!result.status.length) console.log('no pending human actions');
-      for (const line of result.status) console.log(line);
+      logProcess('sweep', `starting sweep (parallel=${opts.parallel}${opts.yolo ? ', yolo=on' : ''})`, '🔄');
+      const result = await rt.sweepWorkstream(processObserver(), { concurrency: opts.parallel, yolo: opts.yolo });
+      logProcess('sweep', `enqueued ${result.enqueued.length}, ran ${result.runResults.length}`, '✅');
+      if (opts.yolo) logProcess('wdo', `specced ${result.yolo.specced.length}, approved ${result.yolo.approved.length}, accepted ${result.yolo.accepted.length}, errors ${result.yolo.errors.length}`, result.yolo.errors.length ? '⚠️' : '⚡');
+      for (const error of result.yolo.errors) logProcess('wdo-error', error, '❌');
+      if (!result.status.length) logProcess('status', 'no pending human actions', '✨');
+      for (const line of result.status) logProcess('status', line, '📌');
       if (opts.once || stopping) break;
+      logProcess('sleep', `waiting ${opts.interval}s before next sweep`, '⏱️');
       await sleep(opts.interval);
     } while (!stopping);
   } finally {

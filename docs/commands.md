@@ -128,6 +128,8 @@ forge process --once
 forge process --yolo --parallel 3
 ```
 
+Process output is optimized for watching long-running sweeps. Each line is prefixed with an `HH:MM:SS` timestamp, a fixed-width label (`sweep`, `task`, `workspace`, `runner`, `agent`, `lease`, `status`, or `wdo` for yolo work), and a small emoji. When stdout is a TTY, labels are colored unless `NO_COLOR` is set. Agent and runner output is relabeled as it streams so concurrent tasks are easier to scan.
+
 By default, the daemon never bypasses human gates: medium/large workstream items still stop at `needs-spec`, specs remain `awaiting-approval` until a human runs `forge task approve`, and completed runs remain `reviewing` until a human validates/reviews/accepts them. `--yolo` is the explicit opt-in escape hatch for trusted backlog burn-downs; validation gates still run before acceptance, and failed validation remains blocked. Press Ctrl-C to request graceful shutdown; Forge finishes the in-flight sweep, prints its summary, and exits before starting another sweep.
 
 ## `forge workstream plan <prompt...>`
