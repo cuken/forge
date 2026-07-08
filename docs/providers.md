@@ -140,7 +140,7 @@ Built-in implementation: `workstream-planner.pi`, which runs the configured pi c
 
 `NotificationProvider` lets providers send lifecycle updates about Forge runs without the core knowing about chat, email, webhooks, terminals, or any other concrete channel. The contract is `notifyRun({ event, task, run?, message })`, where `event` is one of `run.started`, `run.workspace-created`, `run.environment-prepared`, `run.deferred`, `run.succeeded`, or `run.failed`.
 
-`ForgeRuntime` discovers this capability structurally with `hasNotification()`. Providers that do not implement it are ignored. Notification delivery is best-effort: provider failures are swallowed so a broken notification backend cannot change task/run state or mask the real agent result. Providers should therefore log or track their own delivery errors if users need diagnostics.
+`ForgeRuntime` discovers this capability structurally with `hasNotification()`. Providers that do not implement it are ignored. When an agent run completes successfully, the runtime emits `run.succeeded` after persisting the completed `RunRecord`, so notification providers receive provider-neutral metadata such as task id/title, run id/status, workspace, environment, agent id, exit code, and finish time. Notification delivery is best-effort: provider failures are swallowed so a broken notification backend cannot change task/run state or mask the real agent result. Providers should therefore log or track their own delivery errors if users need diagnostics.
 
 Future implementations can deliver the same neutral events through any channel or service while keeping runtime orchestration provider-neutral.
 

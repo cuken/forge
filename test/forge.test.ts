@@ -215,6 +215,22 @@ describe('Forge vertical slice', () => {
       'run.succeeded',
     ]);
     expect(notification.events[0]).toMatchObject({ task: { id: task.id }, run: { taskId: task.id }, message: expect.stringContaining('started task') });
+    const success = notification.events.at(-1)!;
+    expect(success).toMatchObject({
+      event: 'run.succeeded',
+      task: { id: task.id, title: 'notified task' },
+      run: {
+        taskId: task.id,
+        taskTitle: 'notified task',
+        status: 'succeeded',
+        agentId: 'agent.memory',
+        exitCode: 0,
+        workspace: { id: task.id, path: `/tmp/ws/${task.id}`, branch: `forge/${task.id}` },
+        environment: { id: 'isolation.none', kind: 'host', workspacePath: `/tmp/ws/${task.id}` },
+      },
+      message: 'agent exited 0',
+    });
+    expect(success.run?.finishedAt).toEqual(expect.any(String));
   });
 
   it('ignores providers without notification support and best-effort notification failures', async () => {
