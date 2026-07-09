@@ -6,7 +6,7 @@ import { hasRunCleanup, hasWorkspaceCleanup, type CleanupResult } from './cleanu
 import { hasTaskDiscovery, type TaskDiscoveryProvider } from './discovery.js';
 import { hasGate, type GateDecision, type GateDecisionKind, type GateProvider, type GateSubject, type PendingGateDecision } from './gate.js';
 import { hasDoctor, runChecks, type DoctorInput, type HealthCheckResult } from './health.js';
-import type { ExecutionEnvironment, IsolationProvider, IsolationStatus } from './isolation.js';
+import { hasRuntimeInspector, type EnvironmentRuntimeStatus, type ExecutionEnvironment, type IsolationProvider, type IsolationStatus } from './isolation.js';
 import { hasLease, LeaseConflictError, type LeaseHandle, type LeaseProvider } from './lease.js';
 import { buildLifecyclePayload, hasLifecycleHooks, type LifecycleHookEvent, type LifecycleHookProvider } from './lifecycle.js';
 import { hasNotification, type NotificationProvider, type RunNotificationEvent } from './notification.js';
@@ -439,6 +439,7 @@ export class ForgeRuntime {
     const lines: string[] = [];
     const tasks = await this.deps.store.list();
     const runs = this.deps.runStore ? await this.deps.runStore.list() : [];
+    const runtimeStatuses = await this.inspectRunningRuns(runs);
     const taskById = new Map(tasks.map(task => [task.id, task]));
     const taskTitles = tasks.map(task => task.title);
     const taskRef = (task: Task) => this.shellQuote(this.shortFragment(task.title, taskTitles));
@@ -446,6 +447,14 @@ export class ForgeRuntime {
 
     for (const task of tasks.filter(task => task.status === 'needs-spec')) lines.push(`needs spec: ${task.title}${releaseLabel(task)} -> forge task spec ${taskRef(task)} '<spec body>'`);
     for (const task of tasks.filter(task => task.status === 'awaiting-approval')) lines.push(`awaiting approval: ${task.title}${releaseLabel(task)} -> forge task approve ${taskRef(task)}`);
+
+    for (const run of runs.filter(run => run.status === 'running')) {
+      const task = taskById.get(run.taskId);
+      const runtime = runtimeStatuses.get(run.id);
+      const stale = runtime && runtime.agentProcess === 'absent';
+      const runtimeLabel = runtime ? ` (${runtime.state}, agent ${runtime.agentProcess}${runtime.detail ? `: ${runtime.detail}` : ''})` : '';
+      lines.push(`${stale ? 'stale running' : 'running'}: ${run.taskTitle}${releaseLabel(task)}${runtimeLabel} -> ${this.runCommand(run, stale ? 'recover' : 'show', runs)}${stale ? ' --force' : ''}`);
+    }
 
     const succeeded = runs.filter(run => run.status === 'succeeded' && !run.acceptance);
     for (const run of succeeded) {
@@ -487,6 +496,8 @@ export class ForgeRuntime {
 
   async sweepWorkstream(observer?: (event: string) => void, options: { concurrency?: number; yolo?: boolean; sync?: boolean; syncMessage?: string } = {}) {
     const sweepErrors: string[] = [];
+    const recovered = await this.recoverStaleRuns({ cleanup: true });
+    for (const item of recovered) observer?.(`recovered stale run ${item.runId}: ${item.reason}\n`);
     let enqueued: Task[] = [];
     try {
       enqueued = await this.enqueueWorkstream();
@@ -659,7 +670,7 @@ export class ForgeRuntime {
     return this.resolveRun(idOrPrefix);
   }
 
-  async recoverRun(idOrPrefix: string, options: { force?: boolean } = {}) {
+  async recoverRun(idOrPrefix: string, options: { force?: boolean; cleanup?: boolean } = {}) {
     if (!this.deps.runStore) throw new Error('No run store configured');
     const run = await this.resolveRun(idOrPrefix);
     if (run.status !== 'running' && !options.force) throw new Error(`Run ${run.id} is ${run.status}, not running; pass --force to recover anyway`);
@@ -669,10 +680,38 @@ export class ForgeRuntime {
     const byLease = new Map<string, typeof leases>();
     for (const lease of leases) byLease.set(lease.id, [...(byLease.get(lease.id) ?? []), lease]);
     if (leaseProvider) for (const [id, entries] of byLease) await leaseProvider.release({ providerId: leaseProvider.id, id, taskId: run.taskId, scopes: entries.map(entry => entry.scope), acquiredAt: entries[0].acquiredAt });
+    if (options.cleanup !== false && run.environment) {
+      try { await this.deps.isolation?.cleanup?.(run.environment); } catch { /* best-effort stale cleanup */ }
+    }
     const now = new Date().toISOString();
     await this.deps.runStore.update(run.id, { status: 'deferred', error: 'manually recovered: stale or interrupted runner', finishedAt: now });
     await this.deps.store.update(run.taskId, { status: 'ready' });
     return { runId: run.id, taskId: run.taskId, releasedLeases: leases.length };
+  }
+
+  private async inspectRunningRuns(runs: RunRecord[]): Promise<Map<string, EnvironmentRuntimeStatus>> {
+    const statuses = new Map<string, EnvironmentRuntimeStatus>();
+    const inspector = this.deps.isolation && hasRuntimeInspector(this.deps.isolation) ? this.deps.isolation : undefined;
+    if (!inspector) return statuses;
+    await Promise.all(runs.filter(run => run.status === 'running' && run.environment).map(async run => {
+      try { statuses.set(run.id, await inspector.inspectEnvironment(run.environment!)); }
+      catch (error) { statuses.set(run.id, { environmentId: run.environment!.id, state: 'unknown', agentProcess: 'unknown', detail: error instanceof Error ? error.message : String(error) }); }
+    }));
+    return statuses;
+  }
+
+  async recoverStaleRuns(input: { cleanup?: boolean } = {}) {
+    if (!this.deps.runStore) return [];
+    const runs = await this.deps.runStore.list();
+    const statuses = await this.inspectRunningRuns(runs);
+    const recovered: { runId: string; taskId: string; reason: string; releasedLeases: number }[] = [];
+    for (const run of runs.filter(run => run.status === 'running')) {
+      const status = statuses.get(run.id);
+      if (!status || status.agentProcess !== 'absent') continue;
+      const result = await this.recoverRun(run.id, { force: true, cleanup: input.cleanup });
+      recovered.push({ ...result, reason: `${status.state}; agent ${status.agentProcess}${status.detail ? `: ${status.detail}` : ''}` });
+    }
+    return recovered;
   }
 
   async reviewRun(idOrPrefix: string): Promise<ChangeSetSummary> {
@@ -711,6 +750,8 @@ export class ForgeRuntime {
   }
 
   async runReady(taskId?: string, observer?: (event: string) => void, options: { concurrency?: number; leaseWaitMs?: number } = {}) {
+    const recovered = await this.recoverStaleRuns({ cleanup: true });
+    for (const item of recovered) observer?.(`recovered stale run ${item.runId}: ${item.reason}\n`);
     const ready = (await this.deps.store.list()).filter(t => t.status === 'ready' && (!taskId || t.id === taskId));
     const requestedConcurrency = Math.floor(options.concurrency ?? 1);
     const concurrency = Number.isFinite(requestedConcurrency) && requestedConcurrency > 0 ? requestedConcurrency : 1;

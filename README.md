@@ -24,6 +24,7 @@ Forge is a provider-neutral orchestration layer for wide, non-blocking agentic s
 - provider-neutral workstream backlog import/list/enqueue flow backed by filesystem JSON, Linear, or GitHub Issues
 - interactive workstream planning through a generic planner provider (pi-backed interview by default)
 - provider-neutral run lifecycle notifications with configurable provider/channel selection, including local `.forge/audit.log` JSONL audit logging
+- stale-run continuity checks: `forge status` reports running/orphaned environments, and sweeps recover containerized runs whose agent process disappeared
 - provider-neutral release records with version, lifecycle status, target metadata, and timestamps
 - work items can target exactly one planned release and show that target in task/status output
 

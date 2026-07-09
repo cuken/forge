@@ -50,6 +50,21 @@ export interface IsolationStatus {
   checks: HealthCheckResult[];
 }
 
+export interface EnvironmentRuntimeStatus {
+  environmentId: string;
+  state: 'running' | 'stopped' | 'missing' | 'unknown';
+  agentProcess: 'running' | 'absent' | 'unknown';
+  detail?: string;
+}
+
+export interface IsolationRuntimeInspector {
+  inspectEnvironment(environment: ExecutionEnvironment): Promise<EnvironmentRuntimeStatus>;
+}
+
+export function hasRuntimeInspector(value: unknown): value is IsolationRuntimeInspector {
+  return typeof value === 'object' && value !== null && typeof (value as { inspectEnvironment?: unknown }).inspectEnvironment === 'function';
+}
+
 export function hasIsolation(value: unknown): value is IsolationProvider {
   return typeof value === 'object' && value !== null && 'prepare' in value && typeof (value as { prepare?: unknown }).prepare === 'function';
 }

@@ -111,4 +111,40 @@ describe('PodmanIsolationProvider', () => {
       { id: 'isolation.podman:image', status: 'warn', message: 'missing:latest is not present locally; build it with npm run podman:image or set FORGE_PODMAN_IMAGE', detail: 'not found' },
     ]);
   });
+
+  it('inspects live containers and detects missing agent processes', async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const runner: PodmanCommandRunner = async (command, args = []) => {
+      calls.push({ command, args });
+      if (args[0] === 'inspect') return { exitCode: 0, stdout: 'true\n', stderr: '' };
+      if (args[0] === 'exec') return { exitCode: 0, stdout: 'COMMAND ARGS\nsleep sleep infinity\n', stderr: '' };
+      return { exitCode: 1, stdout: '', stderr: 'unexpected' };
+    };
+    const provider = new PodmanIsolationProvider({ runner, mountPiConfig: false });
+
+    await expect(provider.inspectEnvironment({ id: 'isolation.podman:container-123', kind: 'container', workspacePath: '/workspace', description: 'test', metadata: { containerId: 'container-123' } })).resolves.toEqual({
+      environmentId: 'isolation.podman:container-123',
+      state: 'running',
+      agentProcess: 'absent',
+      detail: 'container is alive but no agent process is running',
+    });
+    expect(calls.map(call => call.args)).toEqual([
+      ['inspect', '--format', '{{.State.Running}}', 'container-123'],
+      ['exec', 'container-123', 'ps', '-eo', 'comm,args'],
+    ]);
+  });
+
+  it('inspects live containers and detects running agent processes', async () => {
+    const runner: PodmanCommandRunner = async (_command, args = []) => {
+      if (args[0] === 'inspect') return { exitCode: 0, stdout: 'true\n', stderr: '' };
+      if (args[0] === 'exec') return { exitCode: 0, stdout: 'COMMAND ARGS\npi pi -p work\n', stderr: '' };
+      return { exitCode: 1, stdout: '', stderr: 'unexpected' };
+    };
+    const provider = new PodmanIsolationProvider({ runner, mountPiConfig: false });
+
+    await expect(provider.inspectEnvironment({ id: 'isolation.podman:container-123', kind: 'container', workspacePath: '/workspace', description: 'test', metadata: { containerId: 'container-123' } })).resolves.toMatchObject({
+      state: 'running',
+      agentProcess: 'running',
+    });
+  });
 });

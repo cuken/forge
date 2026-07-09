@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import type { DoctorProvider } from '../../core/health.js';
-import type { ExecutionEnvironment, IsolationPolicy, IsolationProvider, WorkspaceRef } from '../../core/isolation.js';
+import type { EnvironmentRuntimeStatus, ExecutionEnvironment, IsolationPolicy, IsolationProvider, IsolationRuntimeInspector, WorkspaceRef } from '../../core/isolation.js';
 import type { Task } from '../../core/types.js';
 import { runCommand } from '../../util/command.js';
 
@@ -27,7 +27,7 @@ export interface PodmanIsolationOptions {
   runner?: PodmanCommandRunner;
 }
 
-export class PodmanIsolationProvider implements IsolationProvider, DoctorProvider {
+export class PodmanIsolationProvider implements IsolationProvider, IsolationRuntimeInspector, DoctorProvider {
   id = 'isolation.podman';
   kind = 'isolation' as const;
   private command: string;
@@ -137,6 +137,23 @@ export class PodmanIsolationProvider implements IsolationProvider, DoctorProvide
     const containerId = environment.metadata?.containerId ?? environment.id.replace(`${this.id}:`, '');
     const removed = await this.runner(this.command, ['rm', '-f', containerId]);
     if (removed.exitCode !== 0) throw new Error(`podman cleanup failed: ${(removed.stderr || removed.stdout).trim()}`);
+  }
+
+  async inspectEnvironment(environment: ExecutionEnvironment): Promise<EnvironmentRuntimeStatus> {
+    const containerId = environment.metadata?.containerId ?? environment.id.replace(`${this.id}:`, '');
+    const inspected = await this.runner(this.command, ['inspect', '--format', '{{.State.Running}}', containerId]);
+    if (inspected.exitCode !== 0) {
+      const detail = (inspected.stderr || inspected.stdout).trim();
+      return { environmentId: environment.id, state: detail.toLowerCase().includes('no such') ? 'missing' : 'unknown', agentProcess: 'unknown', detail };
+    }
+    const running = inspected.stdout.trim() === 'true';
+    if (!running) return { environmentId: environment.id, state: 'stopped', agentProcess: 'absent' };
+
+    const ps = await this.runner(this.command, ['exec', containerId, 'ps', '-eo', 'comm,args']);
+    if (ps.exitCode !== 0) return { environmentId: environment.id, state: 'running', agentProcess: 'unknown', detail: (ps.stderr || ps.stdout).trim() };
+    const processLines = ps.stdout.split('\n').slice(1).map(line => line.trim()).filter(Boolean);
+    const agentRunning = processLines.some(line => /(^|\s)(pi|node)(\s|$)/.test(line) && !line.includes(' ps -eo '));
+    return { environmentId: environment.id, state: 'running', agentProcess: agentRunning ? 'running' : 'absent', detail: agentRunning ? undefined : 'container is alive but no agent process is running' };
   }
 
   checks(input: { scope?: 'host' | 'workspace' } = {}) {

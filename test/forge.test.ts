@@ -20,6 +20,7 @@ import { MemoryLeaseProvider } from '../src/providers/lease-memory/index.js';
 import { FileWorkstreamProvider } from '../src/providers/workstream-filesystem/index.js';
 import { GitWorktreeChangeSetProvider } from '../src/providers/workspace-git-worktree/changes.js';
 import type { WorkstreamCompletionProvider, WorkstreamCompletionUpdate } from '../src/core/workstream.js';
+import type { EnvironmentRuntimeStatus, ExecutionEnvironment, IsolationProvider, IsolationRuntimeInspector } from '../src/core/isolation.js';
 import type { AgentProvider, ForgeProvider, RunRecord, Task, VcsProvider, WorkspaceProvider } from '../src/core/types.js';
 
 class MemoryVcs implements VcsProvider { id='vcs.memory'; kind='vcs' as const; repo=false; async isRepo(){return this.repo;} async init(){this.repo=true;} async currentBranch(){return 'main';} async status(){return {clean:true, summary:''};} }
@@ -30,6 +31,7 @@ class MemoryReleaseVcs extends MemoryVcs implements ReleaseVcsProvider {
   async prepareReleaseReview(input:{release:{id:string}; target:ReleaseVcsTarget; ref:ReleaseVcsRef}){ this.calls.push(`review:${input.ref.ref}`); return { providerId: this.id, releaseId: input.release.id, status: 'ready' as const, reviewUrl: `${input.target.url}/compare/${input.ref.ref}`, message: `prepared ${input.ref.ref}`, nextSteps: ['open review URL', 'merge manually after approval'] }; }
 }
 class MemoryWorkspace implements WorkspaceProvider { id='workspace.memory'; kind='workspace' as const; creates: Array<{ task: Task; baseBranch?: string }> = []; async create(input:{task:Task; baseBranch?: string}){ this.creates.push(input); return { id: input.task.id, path: '/tmp/ws/'+input.task.id, branch: 'forge/'+input.task.id }; } }
+class InspectableIsolation implements IsolationProvider, IsolationRuntimeInspector { id='isolation.inspectable'; kind='isolation' as const; cleaned:string[]=[]; status:EnvironmentRuntimeStatus={ environmentId:'env-1', state:'running', agentProcess:'absent', detail:'container is alive but no agent process is running' }; async prepare(input:{workspace:{path:string}}): Promise<ExecutionEnvironment> { return { id:'env-1', kind:'container', workspacePath:input.workspace.path, description:'inspectable env' }; } async cleanup(environment:ExecutionEnvironment){ this.cleaned.push(environment.id); } async inspectEnvironment(environment:ExecutionEnvironment){ return { ...this.status, environmentId: environment.id }; } }
 class MemoryAgent implements AgentProvider { id='agent.memory'; kind='agent' as const; runs: string[]=[]; contexts: string[]=[]; async run(input:{task:Task; workspacePath:string; context:string; onOutput?: (chunk: string) => void}){ this.runs.push(input.task.id); this.contexts.push(input.context); input.onOutput?.('agent output\n'); return { exitCode: 0, output: 'ok' }; } }
 class MemoryChangeSet implements ChangeSetProvider { id='change-set.memory'; kind='change-set' as const; accepted: string[]=[]; async review(input:{run:RunRecord}){ return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'changed' as const, files: ['file.txt'], summary: 'M file.txt' }; } async accept(input:{run:RunRecord}){ this.accepted.push(input.run.id); return { providerId: this.id, runId: input.run.id, taskId: input.run.taskId, status: 'accepted' as const, message: 'accepted file.txt' }; } }
 class MemoryValidation implements ValidationProvider, ForgeProvider { id='validation.memory'; kind='validation'; constructor(private status:'pass'|'fail'){} async validate(){ return [{ id: 'validation.memory:gate', status: this.status, message: this.status === 'pass' ? 'ok' : 'not ok' }]; } }
@@ -493,6 +495,42 @@ describe('Forge vertical slice', () => {
 
     await expect(rt.deps.store.get(task.id)).resolves.toMatchObject({ status: 'ready' });
     await expect(rt.deps.runStore!.get(result.run!)).resolves.toMatchObject({ status: 'deferred', error: expect.stringContaining('manually recovered') });
+  });
+
+  it('surfaces stale running runs in status when the container has no agent process', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+    const isolation = new InspectableIsolation();
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), isolation, agent: new MemoryAgent(), changeSet: new MemoryChangeSet() });
+    await rt.init('demo');
+    const task = await rt.createTask('orphaned container task');
+    const run = await rt.deps.runStore!.start({ task, agentId: 'agent.memory' });
+    await rt.deps.store.update(task.id, { status: 'running' });
+    await rt.deps.runStore!.update(run.id, { environment: { id: 'env-1', kind: 'container', workspacePath: '/workspace', description: 'container' } });
+
+    await expect(rt.status()).resolves.toContainEqual(expect.stringContaining('stale running: orphaned container task'));
+    await expect(rt.status()).resolves.toContainEqual(expect.stringContaining('forge runs recover'));
+  });
+
+  it('auto-recovers stale runs before launching ready work and cleans up the orphan environment', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-test-'));
+    const isolation = new InspectableIsolation();
+    const agent = new MemoryAgent();
+    const rt = new ForgeRuntime({ root, store: new FileTaskStore(root), runStore: new FileRunStore(root), vcs: new MemoryVcs(), workspace: new MemoryWorkspace(), isolation, agent, changeSet: new MemoryChangeSet() });
+    await rt.init('demo');
+    const staleTask = await rt.createTask('stale task');
+    const run = await rt.deps.runStore!.start({ task: staleTask, agentId: agent.id });
+    await rt.deps.store.update(staleTask.id, { status: 'running' });
+    await rt.deps.runStore!.update(run.id, { environment: { id: 'env-stale', kind: 'container', workspacePath: '/workspace', description: 'container' } });
+    const readyTask = await rt.createTask('fresh task');
+
+    const events: string[] = [];
+    await rt.runReady(undefined, event => events.push(event), { concurrency: 1 });
+
+    await expect(rt.deps.runStore!.get(run.id)).resolves.toMatchObject({ status: 'deferred' });
+    await expect(rt.deps.store.get(staleTask.id)).resolves.toMatchObject({ status: 'reviewing' });
+    await expect(rt.deps.store.get(readyTask.id)).resolves.toMatchObject({ status: 'reviewing' });
+    expect(isolation.cleaned).toContain('env-stale');
+    expect(events.join('')).toContain(`recovered stale run ${run.id}`);
   });
 
   it('reviews and accepts provider-neutral change sets for completed runs', async () => {

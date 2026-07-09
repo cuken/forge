@@ -98,7 +98,7 @@ Output includes the provider id, aggregate readiness (`pass`, `warn`, or `fail`)
 
 ## `forge status`
 
-Lists pending human actions and prints a ready-to-run command on every line. It summarizes tasks needing specs, specs awaiting approval, succeeded runs awaiting review/validation/acceptance, deferred runs ready to retry, and planned workstream items blocked on unfinished dependencies. Commands use unique title fragments where task/run resolution supports them, so users do not need to copy full IDs.
+Lists pending human actions and prints a ready-to-run command on every line. It summarizes tasks needing specs, specs awaiting approval, active running runs, stale running runs whose isolation provider reports no live agent process, succeeded runs awaiting review/validation/acceptance, deferred runs ready to retry, and planned workstream items blocked on unfinished dependencies. Commands use unique title fragments where task/run resolution supports them, so users do not need to copy full IDs.
 
 Example:
 
@@ -110,7 +110,8 @@ Example output:
 
 ```text
 awaiting approval: Add TOML config [release 1-2-3-package-forge] -> forge task approve 'toml'
-awaiting validation: Add status command -> forge runs validate 'status'
+running: Add daemon sync policy (running, agent running) -> forge runs show 'daemon'
+stale running: Add status command (running, agent absent: container is alive but no agent process is running) -> forge runs recover 'status' --force
 deferred: Update shared provider -> forge task run 'shared'
 blocked workstream: Add final docs (waiting on core-slice) -> forge workstream enqueue final-docs
 ```
@@ -169,11 +170,12 @@ forge cleanup all --apply
 
 Runs a thin CLI loop around `ForgeRuntime.sweepWorkstream()`. Each sweep:
 
-1. Enqueues planned workstream items whose dependencies are done.
-2. Runs all ready tasks with bounded parallelism.
-3. In `--yolo` mode only, asks the configured spec provider to generate specs, approves specs, and accepts succeeded runs so the daemon can continue past human gates.
-4. When daemon sync is enabled and the sweep accepted at least one run, runs configured `SyncProvider` tasks so accepted local state can be committed and pushed without a separate `forge sync`.
-5. Prints the same pending-human-actions summary as `forge status`.
+1. Recovers stale running runs when the isolation provider can prove the environment has no live agent process, cleaning the orphan environment and returning the task to `ready`.
+2. Enqueues planned workstream items whose dependencies are done.
+3. Runs all ready tasks with bounded parallelism.
+4. In `--yolo` mode only, asks the configured spec provider to generate specs, approves specs, and accepts succeeded runs so the daemon can continue past human gates.
+5. When daemon sync is enabled and the sweep accepted at least one run, runs configured `SyncProvider` tasks so accepted local state can be committed and pushed without a separate `forge sync`.
+6. Prints the same pending-human-actions summary as `forge status`.
 
 Options:
 
